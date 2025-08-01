@@ -1373,46 +1373,95 @@ router.get('/usage-stats', authenticateAdmin, async (req, res) => {
 // 获取按模型的使用统计和费用
 router.get('/model-stats', authenticateAdmin, async (req, res) => {
   try {
-    const { period = 'daily' } = req.query; // daily, monthly
+    const { period = 'daily', startDate, endDate } = req.query; // daily, monthly, hourly
     const today = redis.getDateStringInTimezone();
     const tzDate = redis.getDateInTimezone();
     const currentMonth = `${tzDate.getUTCFullYear()}-${String(tzDate.getUTCMonth() + 1).padStart(2, '0')}`;
     
-    logger.info(`📊 Getting global model stats, period: ${period}, today: ${today}, currentMonth: ${currentMonth}`);
+    logger.info(`📊 Getting global model stats, period: ${period}, today: ${today}, currentMonth: ${currentMonth}, startDate: ${startDate}, endDate: ${endDate}`);
     
     const client = redis.getClientSafe();
     
-    // 获取所有模型的统计数据
-    const pattern = period === 'daily' ? `usage:model:daily:*:${today}` : `usage:model:monthly:*:${currentMonth}`;
-    logger.info(`📊 Searching pattern: ${pattern}`);
-    
-    const keys = await client.keys(pattern);
-    logger.info(`📊 Found ${keys.length} matching keys:`, keys);
-    
+    let keys = [];
     const modelStats = [];
     
-    for (const key of keys) {
-      const match = key.match(period === 'daily' ? 
-        /usage:model:daily:(.+):\d{4}-\d{2}-\d{2}$/ : 
-        /usage:model:monthly:(.+):\d{4}-\d{2}$/
-      );
-      
-      if (!match) {
-        logger.warn(`📊 Pattern mismatch for key: ${key}`);
-        continue;
+    if (period === 'hourly') {
+      // 小时粒度统计 - 需要 startDate 和 endDate
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'hourly period requires startDate and endDate parameters' });
       }
       
-      const model = match[1];
-      const data = await client.hgetall(key);
+      const startTime = new Date(startDate);
+      const endTime = new Date(endDate);
       
-      logger.info(`📊 Model ${model} data:`, data);
+      // 限制时间范围不超过24小时
+      const timeDiff = endTime - startTime;
+      if (timeDiff > 24 * 60 * 60 * 1000) {
+        return res.status(400).json({ error: 'hourly period cannot exceed 24 hours' });
+      }
       
-      if (data && Object.keys(data).length > 0) {
+      logger.info(`📊 Hourly model stats from ${startTime.toISOString()} to ${endTime.toISOString()}`);
+      
+      // 汇总所有小时的模型数据
+      const modelStatsMap = new Map();
+      const currentHour = new Date(startTime);
+      currentHour.setMinutes(0, 0, 0);
+      
+      while (currentHour < endTime) {
+        // 转换为系统时区时间进行搜索
+        const tzCurrentHour = redis.getDateInTimezone(currentHour);
+        const dateStr = redis.getDateStringInTimezone(currentHour);
+        const hour = String(tzCurrentHour.getUTCHours()).padStart(2, '0');
+        const hourKey = `${dateStr}:${hour}`;
+        
+        const hourPattern = `usage:model:hourly:*:${hourKey}`;
+        const hourKeys = await client.keys(hourPattern);
+        logger.info(`📊 Hour ${hourKey} pattern ${hourPattern} found ${hourKeys.length} keys`);
+        
+        for (const key of hourKeys) {
+          const match = key.match(/usage:model:hourly:(.+):\d{4}-\d{2}-\d{2}:\d{2}$/);
+          if (!match) {
+            logger.warn(`📊 Pattern mismatch for hourly key: ${key}`);
+            continue;
+          }
+          
+          const model = match[1];
+          const data = await client.hgetall(key);
+          
+          if (data && Object.keys(data).length > 0) {
+            // 累加同一模型的小时数据
+            if (!modelStatsMap.has(model)) {
+              modelStatsMap.set(model, {
+                requests: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheCreateTokens: 0,
+                cacheReadTokens: 0,
+                allTokens: 0
+              });
+            }
+            
+            const stats = modelStatsMap.get(model);
+            stats.requests += parseInt(data.requests) || 0;
+            stats.inputTokens += parseInt(data.inputTokens) || 0;
+            stats.outputTokens += parseInt(data.outputTokens) || 0;
+            stats.cacheCreateTokens += parseInt(data.cacheCreateTokens) || 0;
+            stats.cacheReadTokens += parseInt(data.cacheReadTokens) || 0;
+            stats.allTokens += parseInt(data.allTokens) || 0;
+          }
+        }
+        
+        // 下一小时
+        currentHour.setHours(currentHour.getHours() + 1);
+      }
+      
+      // 转换汇总数据为最终格式
+      for (const [model, stats] of modelStatsMap) {
         const usage = {
-          input_tokens: parseInt(data.inputTokens) || 0,
-          output_tokens: parseInt(data.outputTokens) || 0,
-          cache_creation_input_tokens: parseInt(data.cacheCreateTokens) || 0,
-          cache_read_input_tokens: parseInt(data.cacheReadTokens) || 0
+          input_tokens: stats.inputTokens,
+          output_tokens: stats.outputTokens,
+          cache_creation_input_tokens: stats.cacheCreateTokens,
+          cache_read_input_tokens: stats.cacheReadTokens
         };
         
         // 计算费用
@@ -1421,24 +1470,84 @@ router.get('/model-stats', authenticateAdmin, async (req, res) => {
         modelStats.push({
           model,
           period,
-          requests: parseInt(data.requests) || 0,
-          inputTokens: usage.input_tokens,
-          outputTokens: usage.output_tokens,
-          cacheCreateTokens: usage.cache_creation_input_tokens,
-          cacheReadTokens: usage.cache_read_input_tokens,
-          allTokens: parseInt(data.allTokens) || 0,
+          requests: stats.requests,
+          inputTokens: stats.inputTokens,
+          outputTokens: stats.outputTokens,
+          cacheCreateTokens: stats.cacheCreateTokens,
+          cacheReadTokens: stats.cacheReadTokens,
+          allTokens: stats.allTokens,
           usage: {
-            requests: parseInt(data.requests) || 0,
-            inputTokens: usage.input_tokens,
-            outputTokens: usage.output_tokens,
-            cacheCreateTokens: usage.cache_creation_input_tokens,
-            cacheReadTokens: usage.cache_read_input_tokens,
-            totalTokens: usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens
+            requests: stats.requests,
+            inputTokens: stats.inputTokens,
+            outputTokens: stats.outputTokens,
+            cacheCreateTokens: stats.cacheCreateTokens,
+            cacheReadTokens: stats.cacheReadTokens,
+            totalTokens: stats.inputTokens + stats.outputTokens + stats.cacheCreateTokens + stats.cacheReadTokens
           },
           costs: costData.costs,
           formatted: costData.formatted,
           pricing: costData.pricing
         });
+      }
+      
+      logger.info(`📊 Aggregated ${modelStats.length} hourly model stats`);
+    } else {
+      // 原有的 daily/monthly 逻辑
+      const pattern = period === 'daily' ? `usage:model:daily:*:${today}` : `usage:model:monthly:*:${currentMonth}`;
+      logger.info(`📊 Searching pattern: ${pattern}`);
+      
+      keys = await client.keys(pattern);
+      logger.info(`📊 Found ${keys.length} matching keys:`, keys);
+      
+      for (const key of keys) {
+        const match = key.match(period === 'daily' ? 
+          /usage:model:daily:(.+):\d{4}-\d{2}-\d{2}$/ : 
+          /usage:model:monthly:(.+):\d{4}-\d{2}$/
+        );
+        
+        if (!match) {
+          logger.warn(`📊 Pattern mismatch for key: ${key}`);
+          continue;
+        }
+        
+        const model = match[1];
+        const data = await client.hgetall(key);
+        
+        logger.info(`📊 Model ${model} data:`, data);
+        
+        if (data && Object.keys(data).length > 0) {
+          const usage = {
+            input_tokens: parseInt(data.inputTokens) || 0,
+            output_tokens: parseInt(data.outputTokens) || 0,
+            cache_creation_input_tokens: parseInt(data.cacheCreateTokens) || 0,
+            cache_read_input_tokens: parseInt(data.cacheReadTokens) || 0
+          };
+          
+          // 计算费用
+          const costData = CostCalculator.calculateCost(usage, model);
+          
+          modelStats.push({
+            model,
+            period,
+            requests: parseInt(data.requests) || 0,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            cacheCreateTokens: usage.cache_creation_input_tokens,
+            cacheReadTokens: usage.cache_read_input_tokens,
+            allTokens: parseInt(data.allTokens) || 0,
+            usage: {
+              requests: parseInt(data.requests) || 0,
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+              cacheCreateTokens: usage.cache_creation_input_tokens,
+              cacheReadTokens: usage.cache_read_input_tokens,
+              totalTokens: usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens
+            },
+            costs: costData.costs,
+            formatted: costData.formatted,
+            pricing: costData.pricing
+          });
+        }
       }
     }
     

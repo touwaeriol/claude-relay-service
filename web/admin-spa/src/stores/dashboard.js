@@ -261,9 +261,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
   
-  async function loadModelStats(period = 'daily') {
+  async function loadModelStats(period = 'daily', granularity = 'day', startDate = null, endDate = null) {
     try {
-      const response = await apiClient.get(`/admin/model-stats?period=${period}`)
+      let url = `/admin/model-stats?period=${period}`
+      
+      // 当选择小时粒度时，使用 hourly period 并传递时间范围
+      if (granularity === 'hour' && startDate && endDate) {
+        url = `/admin/model-stats?period=hourly&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+      }
+      
+      const response = await apiClient.get(url)
       if (response.success) {
         dashboardModelStats.value = response.data
       }
@@ -564,6 +571,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     // 根据当前筛选条件刷新数据
     let days
     let modelPeriod = 'monthly'
+    let modelStartDate = null
+    let modelEndDate = null
     
     if (dateFilter.value.type === 'preset') {
       const option = dateFilter.value.presetOptions.find(opt => opt.value === dateFilter.value.preset)
@@ -571,7 +580,40 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (trendGranularity.value === 'hour') {
         // 小时粒度
         days = 1 // 小时粒度默认查看1天的数据
-        modelPeriod = 'daily' // 小时粒度使用日统计
+        modelPeriod = 'hourly' // 小时粒度使用小时统计
+        
+        // 获取小时粒度的时间范围，与 loadUsageTrend 保持一致
+        const now = new Date()
+        let startTime, endTime
+        
+        switch (dateFilter.value.preset) {
+          case 'last24h':
+            // 近24小时：从当前时间往前推24小时
+            endTime = new Date(now)
+            startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+            break
+          case 'yesterday':
+            // 昨天：基于系统时区的昨天
+            const yesterday = new Date()
+            yesterday.setDate(yesterday.getDate() - 1)
+            startTime = getSystemTimezoneDay(yesterday, true)
+            endTime = getSystemTimezoneDay(yesterday, false)
+            break
+          case 'dayBefore':
+            // 前天：基于系统时区的前天
+            const dayBefore = new Date()
+            dayBefore.setDate(dayBefore.getDate() - 2)
+            startTime = getSystemTimezoneDay(dayBefore, true)
+            endTime = getSystemTimezoneDay(dayBefore, false)
+            break
+          default:
+            // 默认近24小时
+            startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+            endTime = now
+        }
+        
+        modelStartDate = startTime.toISOString()
+        modelEndDate = endTime.toISOString()
       } else {
         // 天粒度
         days = option ? option.days : 7
@@ -585,20 +627,41 @@ export const useDashboardStore = defineStore('dashboard', () => {
     } else {
       // 自定义日期范围
       if (trendGranularity.value === 'hour') {
-        // 小时粒度下的自定义范围，计算小时数
+        // 小时粒度下的自定义范围
+        modelPeriod = 'hourly'
+        
+        // 使用自定义时间范围，需要将系统时区时间转换为UTC
+        const convertToUTC = (systemTzTimeStr) => {
+          // 固定使用UTC+8，因为后端系统时区是UTC+8
+          const systemTz = 8
+          // 解析系统时区时间字符串
+          const [datePart, timePart] = systemTzTimeStr.split(' ')
+          const [year, month, day] = datePart.split('-').map(Number)
+          const [hours, minutes, seconds] = timePart.split(':').map(Number)
+          
+          // 创建UTC时间，使其在系统时区显示为用户选择的时间
+          const utcDate = new Date(Date.UTC(year, month - 1, day, hours - systemTz, minutes, seconds))
+          return utcDate.toISOString()
+        }
+        
+        if (dateFilter.value.customRange && dateFilter.value.customRange.length === 2) {
+          modelStartDate = convertToUTC(dateFilter.value.customRange[0])
+          modelEndDate = convertToUTC(dateFilter.value.customRange[1])
+        }
+        
         const start = new Date(dateFilter.value.customRange[0])
         const end = new Date(dateFilter.value.customRange[1])
         const hoursDiff = Math.ceil((end - start) / (1000 * 60 * 60))
         days = Math.ceil(hoursDiff / 24) || 1
       } else {
         days = calculateDaysBetween(dateFilter.value.customStart, dateFilter.value.customEnd)
+        modelPeriod = 'daily' // 自定义范围使用日统计
       }
-      modelPeriod = 'daily' // 自定义范围使用日统计
     }
     
     await Promise.all([
       loadUsageTrend(days, trendGranularity.value),
-      loadModelStats(modelPeriod),
+      loadModelStats(modelPeriod, trendGranularity.value, modelStartDate, modelEndDate),
       loadApiKeysTrend(apiKeysTrendMetric.value)
     ])
   }
