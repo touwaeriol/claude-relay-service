@@ -456,10 +456,24 @@ docker-compose.yml 已包含：
 现在你可以用自己的服务替换官方API了：
 
 **Claude Code 设置环境变量：**
+方法一：临时环境变量
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:3000/api/" # 根据实际填写你服务器的ip地址或者域名
 export ANTHROPIC_AUTH_TOKEN="后台创建的API密钥"
 ```
+
+方法二：Claude Code 配置文件（推荐）
+编辑 `~/.claude/settings.json` 文件（~ 表示用户目录：Windows `C:\Users\用户名`，macOS `/Users/用户名`，Linux `/home/用户名`，root用户为 `/root`）：
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:3000/api/",
+    "ANTHROPIC_AUTH_TOKEN": "后台创建的API密钥"
+  }
+}
+```
+> 💡 这种方法只对 Claude Code 生效，不会影响系统其他程序，是最安全的配置方式。
+
 
 **Gemini CLI 设置环境变量：**
 ```bash
