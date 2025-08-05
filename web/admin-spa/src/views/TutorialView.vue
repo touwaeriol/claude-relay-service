@@ -283,6 +283,28 @@
                 </div>
               </div>
             </div>
+            
+            <div class="bg-white rounded-lg p-4 border border-orange-200">
+              <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
+                方法三：Claude Code 配置文件（推荐）
+              </h6>
+              <p class="text-gray-600 text-sm mb-3">
+                编辑 Claude Code 的配置文件 <code class="bg-gray-200 px-1 rounded">~/.claude/settings.json</code>（~ 表示用户目录，Windows: <code class="bg-gray-200 px-1 rounded">C:\Users\用户名\.claude\settings.json</code>）：
+              </p>
+              <div class="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                <div class="text-gray-300">
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "{{ currentBaseUrl }}",
+    "ANTHROPIC_AUTH_TOKEN": "你的API密钥"
+  }
+}
+                </div>
+              </div>
+              <p class="text-blue-700 text-xs mt-2">
+                💡 这种方法只对 Claude Code 生效，不会影响系统其他程序，是最安全的配置方式。
+              </p>
+            </div>
           </div>
         </div>
 
@@ -833,6 +855,28 @@
                 </div>
               </div>
             </div>
+            
+            <div class="bg-white rounded-lg p-4 border border-orange-200">
+              <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
+                方法三：Claude Code 配置文件（推荐）
+              </h6>
+              <p class="text-gray-600 text-sm mb-3">
+                编辑 Claude Code 的配置文件 <code class="bg-gray-200 px-1 rounded">~/.claude/settings.json</code>（~ 表示用户目录，macOS: <code class="bg-gray-200 px-1 rounded">/Users/用户名/.claude/settings.json</code>）：
+              </p>
+              <div class="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                <div class="text-gray-300">
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "{{ currentBaseUrl }}",
+    "ANTHROPIC_AUTH_TOKEN": "你的API密钥"
+  }
+}
+                </div>
+              </div>
+              <p class="text-blue-700 text-xs mt-2">
+                💡 这种方法只对 Claude Code 生效，不会影响系统其他程序，是最安全的配置方式。
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -1262,6 +1306,28 @@
                 </div>
               </div>
             </div>
+            
+            <div class="bg-white rounded-lg p-4 border border-orange-200">
+              <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
+                方法三：Claude Code 配置文件（推荐）
+              </h6>
+              <p class="text-gray-600 text-sm mb-3">
+                编辑 Claude Code 的配置文件 <code class="bg-gray-200 px-1 rounded">~/.claude/settings.json</code>（~ 表示用户目录，Linux: <code class="bg-gray-200 px-1 rounded">/home/用户名/.claude/settings.json</code>，root用户为 <code class="bg-gray-200 px-1 rounded">/root/.claude/settings.json</code>）：
+              </p>
+              <div class="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                <div class="text-gray-300">
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "{{ currentBaseUrl }}",
+    "ANTHROPIC_AUTH_TOKEN": "你的API密钥"
+  }
+}
+                </div>
+              </div>
+              <p class="text-blue-700 text-xs mt-2">
+                💡 这种方法只对 Claude Code 生效，不会影响系统其他程序，是最安全的配置方式。
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -1455,6 +1521,11 @@ const currentBaseUrl = computed(() => {
 // Gemini CLI 基础URL
 const geminiBaseUrl = computed(() => {
   return getBaseUrlPrefix() + '/gemini'
+})
+
+// 当前API基础URL
+const currentBaseUrl = computed(() => {
+  return `${window.location.origin}/api/v1`
 })
 </script>
 
