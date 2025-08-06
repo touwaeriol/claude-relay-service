@@ -283,7 +283,7 @@
                 </div>
               </div>
             </div>
-            
+
             <div class="bg-white rounded-lg p-4 border border-orange-200">
               <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
                 方法三：Claude Code 配置文件（推荐）
@@ -855,7 +855,7 @@
                 </div>
               </div>
             </div>
-            
+
             <div class="bg-white rounded-lg p-4 border border-orange-200">
               <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
                 方法三：Claude Code 配置文件（推荐）
@@ -1306,7 +1306,7 @@
                 </div>
               </div>
             </div>
-            
+
             <div class="bg-white rounded-lg p-4 border border-orange-200">
               <h6 class="font-medium text-sm sm:text-base text-gray-800 mb-2">
                 方法三：Claude Code 配置文件（推荐）
@@ -1521,11 +1521,6 @@ const currentBaseUrl = computed(() => {
 // Gemini CLI 基础URL
 const geminiBaseUrl = computed(() => {
   return getBaseUrlPrefix() + '/gemini'
-})
-
-// 当前API基础URL
-const currentBaseUrl = computed(() => {
-  return `${window.location.origin}/api/v1`
 })
 </script>
 
