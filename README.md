@@ -456,6 +456,7 @@ docker-compose.yml 已包含：
 现在你可以用自己的服务替换官方API了：
 
 **Claude Code 设置环境变量：**
+
 方法一：临时环境变量
 ```bash
 export ANTHROPIC_BASE_URL="http://127.0.0.1:3000/api/" # 根据实际填写你服务器的ip地址或者域名
