@@ -314,13 +314,22 @@ const removeModelMapping = (index) => {
 }
 
 const validate = () => {
-  const e = {}
-  if (!form.value.name || form.value.name.trim().length === 0) e.name = '名称不能为空'
-  if (!form.value.apiUrl || form.value.apiUrl.trim().length === 0) e.apiUrl = 'API URL 不能为空'
-  if (!isEdit.value && (!form.value.apiKey || form.value.apiKey.trim().length === 0))
+  const e = {
+    name: '',
+    apiUrl: '',
+    apiKey: ''
+  }
+  if (!form.value.name || form.value.name.trim().length === 0) {
+    e.name = '名称不能为空'
+  }
+  if (!form.value.apiUrl || form.value.apiUrl.trim().length === 0) {
+    e.apiUrl = 'API URL 不能为空'
+  }
+  if (!isEdit.value && (!form.value.apiKey || form.value.apiKey.trim().length === 0)) {
     e.apiKey = 'API Key 不能为空'
+  }
   errors.value = e
-  return Object.keys(e).length === 0
+  return Object.values(e).every((val) => !val)
 }
 
 const submit = async () => {
@@ -339,7 +348,7 @@ const submit = async () => {
         dailyQuota: Number(form.value.dailyQuota || 0),
         quotaResetTime: form.value.quotaResetTime || '00:00',
         proxy: form.value.proxy || null,
-        supportedModels: buildSupportedModels()
+        supportedModels: buildSupportedModels(),
       }
       if (form.value.apiKey && form.value.apiKey.trim().length > 0) {
         updates.apiKey = form.value.apiKey
@@ -365,7 +374,7 @@ const submit = async () => {
         proxy: form.value.proxy,
         accountType: 'shared',
         dailyQuota: Number(form.value.dailyQuota || 0),
-        quotaResetTime: form.value.quotaResetTime || '00:00'
+        quotaResetTime: form.value.quotaResetTime || '00:00',
       }
       const res = await apiClient.post('/admin/ccr-accounts', payload)
       if (res.success) {

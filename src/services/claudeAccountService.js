@@ -75,6 +75,8 @@ class ClaudeAccountService {
       useUnifiedClientId = false, // 是否使用统一的客户端标识
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
+      exclusiveSessionOnly = false, // 是否只允许处理自身会话
+      sessionRetentionSeconds = 0, // 会话保留时间（秒）
       extInfo = null // 额外扩展信息
     } = options
 
@@ -82,6 +84,23 @@ class ClaudeAccountService {
 
     let accountData
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
+
+    let normalizedSessionRetentionSeconds = parseInt(sessionRetentionSeconds, 10)
+    if (!Number.isFinite(normalizedSessionRetentionSeconds) || normalizedSessionRetentionSeconds < 0) {
+      normalizedSessionRetentionSeconds = 0
+    }
+
+    const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
+
+    if (
+      exclusiveEnabled &&
+      (!Number.isInteger(normalizedSessionRetentionSeconds) || normalizedSessionRetentionSeconds <= 0)
+    ) {
+      throw new Error('sessionRetentionSeconds must be a positive integer (in seconds) when exclusiveSessionOnly is enabled')
+    }
+    if (!exclusiveEnabled) {
+      normalizedSessionRetentionSeconds = 0
+    }
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -120,7 +139,9 @@ class ClaudeAccountService {
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        exclusiveSessionOnly: exclusiveEnabled.toString(),
+        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString()
       }
     } else {
       // 兼容旧格式
@@ -152,7 +173,9 @@ class ClaudeAccountService {
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        exclusiveSessionOnly: exclusiveEnabled.toString(),
+        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString()
       }
     }
 
@@ -200,6 +223,8 @@ class ClaudeAccountService {
       useUnifiedUserAgent,
       useUnifiedClientId,
       unifiedClientId,
+      exclusiveSessionOnly: exclusiveEnabled,
+      sessionRetentionSeconds: normalizedSessionRetentionSeconds,
       extInfo: normalizedExtInfo
     }
   }
@@ -558,7 +583,12 @@ class ClaudeAccountService {
             // 添加停止原因
             stoppedReason: account.stoppedReason || null,
             // 扩展信息
-            extInfo: parsedExtInfo
+            extInfo: parsedExtInfo,
+            exclusiveSessionOnly:
+              account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true,
+            sessionRetentionSeconds: account.sessionRetentionSeconds
+              ? parseInt(account.sessionRetentionSeconds, 10)
+              : 0
           }
         })
       )
@@ -650,11 +680,22 @@ class ClaudeAccountService {
         'useUnifiedClientId',
         'unifiedClientId',
         'subscriptionExpiresAt',
-        'extInfo'
+        'extInfo',
+        'exclusiveSessionOnly',
+        'sessionRetentionSeconds'
       ]
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
       let extInfoProvided = false
+      let exclusiveFlag =
+        accountData.exclusiveSessionOnly === undefined
+          ? false
+          : accountData.exclusiveSessionOnly === 'true' ||
+            accountData.exclusiveSessionOnly === true
+      let sessionRetentionSecondsValue = parseInt(accountData.sessionRetentionSeconds || '0', 10)
+      if (!Number.isFinite(sessionRetentionSecondsValue)) {
+        sessionRetentionSecondsValue = 0
+      }
 
       // 检查是否新增了 refresh token
       const oldRefreshToken = this._decryptSensitiveData(accountData.refreshToken)
@@ -696,6 +737,13 @@ class ClaudeAccountService {
                 }
               }
             }
+          } else if (field === 'exclusiveSessionOnly') {
+            exclusiveFlag = value === true || value === 'true'
+            updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+          } else if (field === 'sessionRetentionSeconds') {
+            const parsed = parseInt(value, 10)
+            sessionRetentionSecondsValue = Number.isFinite(parsed) ? parsed : 0
+            updatedData.sessionRetentionSeconds = sessionRetentionSecondsValue.toString()
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }
@@ -703,6 +751,23 @@ class ClaudeAccountService {
       }
 
       // 如果新增了 refresh token（之前没有，现在有了），更新过期时间为10分钟
+      if (exclusiveFlag) {
+        if (
+          !Number.isInteger(sessionRetentionSecondsValue) ||
+          sessionRetentionSecondsValue <= 0
+        ) {
+          throw new Error(
+            'sessionRetentionSeconds must be a positive integer (in seconds) when exclusiveSessionOnly is enabled'
+          )
+        }
+        updatedData.exclusiveSessionOnly = 'true'
+        updatedData.sessionRetentionSeconds = sessionRetentionSecondsValue.toString()
+      } else {
+        updatedData.exclusiveSessionOnly = 'false'
+        updatedData.sessionRetentionSeconds = '0'
+      }
+
+      // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (updates.refreshToken && !oldRefreshToken && updates.refreshToken.trim()) {
         const newExpiresAt = Date.now() + 10 * 60 * 1000 // 10分钟
         updatedData.expiresAt = newExpiresAt.toString()

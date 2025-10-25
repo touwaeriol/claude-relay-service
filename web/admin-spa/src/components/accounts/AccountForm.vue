@@ -2426,6 +2426,47 @@
             </label>
           </div>
 
+          <div v-if="supportsExclusiveSessions" class="mt-4 space-y-3">
+            <label class="flex items-start">
+              <input
+                v-model="form.exclusiveSessionOnly"
+                class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                type="checkbox"
+              />
+              <div class="ml-3">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  禁止跨账号调度
+                </span>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话保留时间。
+                </p>
+              </div>
+            </label>
+            <div>
+              <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                会话保留时间 (秒)
+              </label>
+              <input
+                v-model.number="form.sessionRetentionSeconds"
+                :disabled="!form.exclusiveSessionOnly"
+                class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
+                min="1"
+                step="1"
+                type="number"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
+              </p>
+              <p
+                v-if="errors.sessionRetentionSeconds"
+                class="mt-1 text-xs text-red-500 dark:text-red-400"
+              >
+                {{ errors.sessionRetentionSeconds }}
+              </p>
+            </div>
+          </div>
+
           <!-- 所有平台的优先级设置（编辑模式） -->
           <div>
             <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
@@ -3312,6 +3353,8 @@ import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
 
+const DEFAULT_SESSION_RETENTION_SECONDS = 7 * 24 * 60 * 60
+
 const props = defineProps({
   account: {
     type: Object,
@@ -3507,6 +3550,18 @@ const form = ref({
   useUnifiedUserAgent: props.account?.useUnifiedUserAgent || false, // 使用统一Claude Code版本
   useUnifiedClientId: props.account?.useUnifiedClientId || false, // 使用统一的客户端标识
   unifiedClientId: props.account?.unifiedClientId || '', // 统一的客户端标识
+  exclusiveSessionOnly:
+    props.account?.exclusiveSessionOnly !== undefined
+      ? !!props.account?.exclusiveSessionOnly
+      : false,
+  sessionRetentionSeconds: (() => {
+    const raw = props.account?.sessionRetentionSeconds
+    const parsed = Number(raw)
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed
+    }
+    return DEFAULT_SESSION_RETENTION_SECONDS
+  })(),
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3597,6 +3652,26 @@ const commonModels = [
 
 // 模型映射表数据
 const modelMappings = ref([])
+
+const supportsExclusiveSessions = computed(() => form.value.platform === 'claude')
+
+const sessionRetentionDays = computed(() => {
+  const seconds = Number(form.value.sessionRetentionSeconds)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return '0'
+  }
+  const days = seconds / 86400
+  const rounded = Math.round(days * 100) / 100
+  return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(2)
+})
+
+const resolveSessionRetentionSeconds = () => {
+  const seconds = Number(form.value.sessionRetentionSeconds)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return DEFAULT_SESSION_RETENTION_SECONDS
+  }
+  return Math.max(1, Math.floor(seconds))
+}
 
 // 初始化模型映射表
 const initModelMappings = () => {
@@ -3709,7 +3784,8 @@ const errors = ref({
   secretAccessKey: '',
   region: '',
   azureEndpoint: '',
-  deploymentName: ''
+  deploymentName: '',
+  sessionRetentionSeconds: ''
 })
 
 // 计算是否可以进入下一步
@@ -4048,6 +4124,14 @@ const handleOAuthSuccess = async (tokenInfo) => {
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
       }
+      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
+      data.sessionRetentionSeconds = data.exclusiveSessionOnly
+        ? resolveSessionRetentionSeconds()
+        : 0
+      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
+      data.sessionRetentionSeconds = data.exclusiveSessionOnly
+        ? resolveSessionRetentionSeconds()
+        : 0
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
       data.geminiOauth = tokenInfo.tokens || tokenInfo
@@ -4289,6 +4373,18 @@ const createAccount = async () => {
 
   // 分组类型验证 - 创建账户流程修复
   if (
+    ['claude', 'claude-console', 'ccr'].includes(form.value.platform) &&
+    form.value.exclusiveSessionOnly
+  ) {
+    const retention = Number(form.value.sessionRetentionSeconds)
+    if (!Number.isInteger(retention) || retention <= 0) {
+      errors.value.sessionRetentionSeconds = '请填写大于 0 的会话保留秒数'
+      hasError = true
+    }
+  }
+
+  // 分组类型验证 - 创建账户流程修复
+  if (
     form.value.accountType === 'group' &&
     (!form.value.groupIds || form.value.groupIds.length === 0)
   ) {
@@ -4436,6 +4532,10 @@ const createAccount = async () => {
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
+      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
+      data.sessionRetentionSeconds = data.exclusiveSessionOnly
+        ? resolveSessionRetentionSeconds()
+        : 0
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
       data.baseApi = form.value.baseApi
@@ -4712,6 +4812,10 @@ const updateAccount = async () => {
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
       }
+      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
+      data.sessionRetentionSeconds = data.exclusiveSessionOnly
+        ? resolveSessionRetentionSeconds()
+        : 0
     }
 
     // OpenAI 账号优先级更新
@@ -4842,6 +4946,36 @@ const updateAccount = async () => {
     loading.value = false
   }
 }
+
+// 监听表单名称变化，清除错误
+watch(
+  () => form.value.exclusiveSessionOnly,
+  (enabled) => {
+    const numeric = Number(form.value.sessionRetentionSeconds)
+    if (enabled && (!Number.isFinite(numeric) || numeric <= 0)) {
+      form.value.sessionRetentionSeconds = DEFAULT_SESSION_RETENTION_SECONDS
+    }
+    if (!enabled && errors.value.sessionRetentionSeconds) {
+      errors.value.sessionRetentionSeconds = ''
+    }
+  }
+)
+
+watch(
+  () => form.value.sessionRetentionSeconds,
+  (value) => {
+    if (!errors.value.sessionRetentionSeconds) {
+      return
+    }
+    const numeric = Number(value)
+    if (
+      !form.value.exclusiveSessionOnly ||
+      (Number.isFinite(numeric) && numeric > 0 && Number.isInteger(numeric))
+    ) {
+      errors.value.sessionRetentionSeconds = ''
+    }
+  }
+)
 
 // 监听表单名称变化，清除错误
 watch(

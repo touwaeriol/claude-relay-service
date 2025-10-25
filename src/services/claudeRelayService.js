@@ -6,6 +6,10 @@ const ProxyHelper = require('../utils/proxyHelper')
 const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
+const {
+  buildSessionContext,
+  registerSessionForAccount
+} = require('../utils/claudeSessionCoordinator')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 const claudeCodeHeadersService = require('./claudeCodeHeadersService')
@@ -107,6 +111,39 @@ class ClaudeRelayService {
     options = {}
   ) {
     let upstreamRequest = null
+    const sessionHash = sessionHelper.generateSessionHash(requestBody)
+    let sessionContext = options.sessionContext || null
+    let accountSelection = options.preselectedAccount || null
+    const isOpusModelRequest =
+      typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
+
+    try {
+      if (!sessionContext) {
+        sessionContext = await buildSessionContext(sessionHash, requestBody)
+      }
+
+      if (!accountSelection) {
+        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
+          apiKeyData,
+          sessionHash,
+          requestBody.model,
+          { sessionContext }
+        )
+      }
+
+      await registerSessionForAccount(accountSelection, sessionContext)
+    } catch (error) {
+      if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
+        throw {
+          status: 422,
+          body: JSON.stringify({
+            error: error.code,
+            message: error.message
+          })
+        }
+      }
+      throw error
+    }
 
     try {
       // 调试日志：查看API Key数据
@@ -116,39 +153,6 @@ class ClaudeRelayService {
         restrictedModels: apiKeyData.restrictedModels,
         requestedModel: requestBody.model
       })
-
-      const isOpusModelRequest =
-        typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
-
-      // 生成会话哈希用于sticky会话
-      const sessionHash = sessionHelper.generateSessionHash(requestBody)
-
-      // 选择可用的Claude账户（支持专属绑定和sticky会话）
-      let accountSelection
-      try {
-        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          apiKeyData,
-          sessionHash,
-          requestBody.model
-        )
-      } catch (error) {
-        if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
-          logger.warn(
-            `🚫 Dedicated account ${error.accountId} is rate limited for API key ${apiKeyData.name}, returning 403`
-          )
-          return {
-            statusCode: 403,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              error: 'upstream_rate_limited',
-              message: limitMessage
-            }),
-            accountId: error.accountId
-          }
-        }
-        throw error
-      }
       const { accountId } = accountSelection
       const { accountType } = accountSelection
 
@@ -493,6 +497,18 @@ class ClaudeRelayService {
       response.accountId = accountId
       return response
     } catch (error) {
+      if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+        const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
+        throw {
+          status: 403,
+          body: JSON.stringify({
+            error: 'upstream_rate_limited',
+            message: limitMessage
+          }),
+          accountId: error.accountId
+        }
+      }
+
       logger.error(
         `❌ Claude relay request failed for key: ${apiKeyData.name || apiKeyData.id}:`,
         error.message
@@ -1137,35 +1153,49 @@ class ClaudeRelayService {
         requestedModel: requestBody.model
       })
 
-      const isOpusModelRequest =
-        typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
-
-      // 生成会话哈希用于sticky会话
-      const sessionHash = sessionHelper.generateSessionHash(requestBody)
-
-      // 选择可用的Claude账户（支持专属绑定和sticky会话）
       let accountSelection
       try {
-        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          apiKeyData,
-          sessionHash,
-          requestBody.model
-        )
+        const isOpusModelRequest =
+        typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
+
+      // 生成会      let accountSelection
+      try {
+        const sessionHash = sessionHelper.generateSessionHash(requestBody)
+        let sessionContext = options.sessionContext || null
+        if (!sessionContext) {
+          sessionContext = await buildSessionContext(sessionHash, requestBody)
+        }
+
+        accountSelection = options.preselectedAccount || null
+        if (!accountSelection) {
+          accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
+            apiKeyData,
+            sessionHash,
+            requestBody.model,
+            { sessionContext }
+          )
+          await registerSessionForAccount(accountSelection, sessionContext)
+        }
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
-          if (!responseStream.headersSent) {
-            responseStream.status(403)
-            responseStream.setHeader('Content-Type', 'application/json')
-          }
-          responseStream.write(
-            JSON.stringify({
+          const limitMessage = claudeRelayService._buildStandardRateLimitMessage(error.rateLimitEndAt)
+          throw {
+            status: 403,
+            body: JSON.stringify({
               error: 'upstream_rate_limited',
               message: limitMessage
+            }),
+            accountId: error.accountId
+          }
+        }
+        if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
+          throw {
+            status: 422,
+            body: JSON.stringify({
+              error: error.code,
+              message: error.message
             })
-          )
-          responseStream.end()
-          return
+          }
         }
         throw error
       }

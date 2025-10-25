@@ -6,6 +6,7 @@ const accountGroupService = require('./accountGroupService')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
+const claudeSessionService = require('./claudeSessionService')
 
 class UnifiedClaudeScheduler {
   constructor() {
@@ -20,6 +21,54 @@ class UnifiedClaudeScheduler {
     }
     // 明确设置为 false（布尔值）或 'false'（字符串）时不可调度
     return schedulable !== false && schedulable !== 'false'
+  }
+
+  async _applySessionEligibilityRules(accounts, sessionContext) {
+    if (!sessionContext || !Array.isArray(accounts) || accounts.length === 0) {
+      return accounts
+    }
+
+    const { sessionId, isNewSession } = sessionContext
+    const filtered = []
+    const accountSessions = sessionContext.accountSessions || {}
+    sessionContext.accountSessions = accountSessions
+
+    for (const account of accounts) {
+      const exclusive = account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
+      const retentionSeconds = parseInt(account.sessionRetentionSeconds || '0', 10)
+      const accountKey = account.accountId || account.id
+
+      if (exclusive && retentionSeconds <= 0) {
+        logger.warn(`⚠️ Exclusive account ${account.accountId} missing retention seconds, skipping`)
+        continue
+      }
+
+      if (!sessionId) {
+        if (!exclusive) {
+          filtered.push(account)
+        }
+        continue
+      }
+
+      if (!accountSessions[accountKey]) {
+        accountSessions[accountKey] = await claudeSessionService.getAccountSession(
+          accountKey,
+          sessionContext.sessionId
+        )
+      }
+      const hasRecordedSession = !!accountSessions[accountKey]
+
+      if (exclusive && !isNewSession && !hasRecordedSession) {
+        logger.debug(
+          `🛑 Skipping exclusive account ${account.accountId} for continuation session ${sessionId}`
+        )
+        continue
+      }
+
+      filtered.push(account)
+    }
+
+    return filtered
   }
 
   // 🔍 检查账户是否支持请求的模型
@@ -139,8 +188,17 @@ class UnifiedClaudeScheduler {
   }
 
   // 🎯 统一调度Claude账号（官方和Console）
-  async selectAccountForApiKey(apiKeyData, sessionHash = null, requestedModel = null) {
+  async selectAccountForApiKey(
+    apiKeyData,
+    sessionHash = null,
+    requestedModel = null,
+    options = {}
+  ) {
     try {
+      const sessionContext = options.sessionContext || null
+      if (sessionContext && !sessionContext.accountSessions) {
+        sessionContext.accountSessions = {}
+      }
       // 解析供应商前缀
       const { vendor, baseModel } = parseVendorPrefixedModel(requestedModel)
       const effectiveModel = vendor === 'ccr' ? baseModel : requestedModel
@@ -296,11 +354,13 @@ class UnifiedClaudeScheduler {
       }
 
       // 获取所有可用账户（传递请求的模型进行过滤）
-      const availableAccounts = await this._getAllAvailableAccounts(
+      let availableAccounts = await this._getAllAvailableAccounts(
         apiKeyData,
         effectiveModel,
         false // 仅前缀才走 CCR：默认池不包含 CCR 账户
       )
+
+      availableAccounts = await this._applySessionEligibilityRules(availableAccounts, sessionContext)
 
       if (availableAccounts.length === 0) {
         // 提供更详细的错误信息
@@ -337,7 +397,8 @@ class UnifiedClaudeScheduler {
 
       return {
         accountId: selectedAccount.accountId,
-        accountType: selectedAccount.accountType
+        accountType: selectedAccount.accountType,
+        account: selectedAccount
       }
     } catch (error) {
       logger.error('❌ Failed to select account for API key:', error)
