@@ -86,7 +86,10 @@ class ClaudeAccountService {
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
 
     let normalizedSessionRetentionSeconds = parseInt(sessionRetentionSeconds, 10)
-    if (!Number.isFinite(normalizedSessionRetentionSeconds) || normalizedSessionRetentionSeconds < 0) {
+    if (
+      !Number.isFinite(normalizedSessionRetentionSeconds) ||
+      normalizedSessionRetentionSeconds < 0
+    ) {
       normalizedSessionRetentionSeconds = 0
     }
 
@@ -94,9 +97,12 @@ class ClaudeAccountService {
 
     if (
       exclusiveEnabled &&
-      (!Number.isInteger(normalizedSessionRetentionSeconds) || normalizedSessionRetentionSeconds <= 0)
+      (!Number.isInteger(normalizedSessionRetentionSeconds) ||
+        normalizedSessionRetentionSeconds <= 0)
     ) {
-      throw new Error('sessionRetentionSeconds must be a positive integer (in seconds) when exclusiveSessionOnly is enabled')
+      throw new Error(
+        'sessionRetentionSeconds must be a positive integer (in seconds) when exclusiveSessionOnly is enabled'
+      )
     }
     if (!exclusiveEnabled) {
       normalizedSessionRetentionSeconds = 0
@@ -690,8 +696,7 @@ class ClaudeAccountService {
       let exclusiveFlag =
         accountData.exclusiveSessionOnly === undefined
           ? false
-          : accountData.exclusiveSessionOnly === 'true' ||
-            accountData.exclusiveSessionOnly === true
+          : accountData.exclusiveSessionOnly === 'true' || accountData.exclusiveSessionOnly === true
       let sessionRetentionSecondsValue = parseInt(accountData.sessionRetentionSeconds || '0', 10)
       if (!Number.isFinite(sessionRetentionSecondsValue)) {
         sessionRetentionSecondsValue = 0
@@ -752,10 +757,7 @@ class ClaudeAccountService {
 
       // 如果新增了 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (exclusiveFlag) {
-        if (
-          !Number.isInteger(sessionRetentionSecondsValue) ||
-          sessionRetentionSecondsValue <= 0
-        ) {
+        if (!Number.isInteger(sessionRetentionSecondsValue) || sessionRetentionSecondsValue <= 0) {
           throw new Error(
             'sessionRetentionSeconds must be a positive integer (in seconds) when exclusiveSessionOnly is enabled'
           )

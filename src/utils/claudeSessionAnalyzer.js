@@ -40,7 +40,7 @@ function analyzeSessionMessages(requestBody = {}) {
       continue
     }
 
-    const role = message.role
+    const { role } = message
     if (role !== 'user') {
       result.isNewSession = false
     }

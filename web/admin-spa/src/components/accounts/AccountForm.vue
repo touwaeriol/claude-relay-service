@@ -1619,6 +1619,49 @@
               </label>
             </div>
 
+            <!-- 限制跨账号调度和会话保留时间配置（创建模式） -->
+            <div v-if="supportsExclusiveSessions" class="mt-4">
+              <label class="flex items-start">
+                <input
+                  v-model="form.exclusiveSessionOnly"
+                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                />
+                <div class="ml-3 flex-1">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    禁止跨账号调度
+                  </span>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话摘要保留时间。
+                  </p>
+                  <div v-if="form.exclusiveSessionOnly" class="mt-3">
+                    <label
+                      class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    >
+                      会话摘要保留时间（秒）
+                    </label>
+                    <input
+                      v-model.number="form.sessionRetentionSeconds"
+                      class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                      :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
+                      min="1"
+                      step="1"
+                      type="number"
+                    />
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
+                    </p>
+                    <p
+                      v-if="errors.sessionRetentionSeconds"
+                      class="mt-1 text-xs text-red-500 dark:text-red-400"
+                    >
+                      {{ errors.sessionRetentionSeconds }}
+                    </p>
+                  </div>
+                </div>
+              </label>
+            </div>
+
             <!-- 所有平台的优先级设置 -->
             <div>
               <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
@@ -2426,45 +2469,44 @@
             </label>
           </div>
 
-          <div v-if="supportsExclusiveSessions" class="mt-4 space-y-3">
+          <div v-if="supportsExclusiveSessions" class="mt-4">
             <label class="flex items-start">
               <input
                 v-model="form.exclusiveSessionOnly"
                 class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
                 type="checkbox"
               />
-              <div class="ml-3">
+              <div class="ml-3 flex-1">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
                   禁止跨账号调度
                 </span>
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话保留时间。
+                  开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话摘要保留时间。
                 </p>
+                <div v-if="form.exclusiveSessionOnly" class="mt-3">
+                  <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    会话摘要保留时间（秒）
+                  </label>
+                  <input
+                    v-model.number="form.sessionRetentionSeconds"
+                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                    :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
+                    min="1"
+                    step="1"
+                    type="number"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
+                  </p>
+                  <p
+                    v-if="errors.sessionRetentionSeconds"
+                    class="mt-1 text-xs text-red-500 dark:text-red-400"
+                  >
+                    {{ errors.sessionRetentionSeconds }}
+                  </p>
+                </div>
               </div>
             </label>
-            <div>
-              <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
-                会话保留时间 (秒)
-              </label>
-              <input
-                v-model.number="form.sessionRetentionSeconds"
-                :disabled="!form.exclusiveSessionOnly"
-                class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
-                min="1"
-                step="1"
-                type="number"
-              />
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
-              </p>
-              <p
-                v-if="errors.sessionRetentionSeconds"
-                class="mt-1 text-xs text-red-500 dark:text-red-400"
-              >
-                {{ errors.sessionRetentionSeconds }}
-              </p>
-            </div>
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
@@ -3653,7 +3695,9 @@ const commonModels = [
 // 模型映射表数据
 const modelMappings = ref([])
 
-const supportsExclusiveSessions = computed(() => form.value.platform === 'claude')
+const supportsExclusiveSessions = computed(() =>
+  ['claude', 'claude-console', 'ccr'].includes(form.value.platform)
+)
 
 const sessionRetentionDays = computed(() => {
   const seconds = Number(form.value.sessionRetentionSeconds)

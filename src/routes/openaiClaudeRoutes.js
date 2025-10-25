@@ -15,7 +15,8 @@ const claudeCodeHeadersService = require('../services/claudeCodeHeadersService')
 const sessionHelper = require('../utils/sessionHelper')
 const {
   buildSessionContext,
-  registerSessionForAccount
+  registerSessionForAccount,
+  refreshSessionRetention
 } = require('../utils/claudeSessionCoordinator')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const pricingService = require('../services/pricingService')
@@ -262,7 +263,6 @@ async function handleChatCompletion(req, res, apiKeyData) {
       }
       throw error
     }
-    }
     const { accountId } = accountSelection
 
     // 获取该账号存储的 Claude Code headers
@@ -348,6 +348,7 @@ async function handleChatCompletion(req, res, apiKeyData) {
           preselectedAccount: accountSelection
         }
       )
+      await refreshSessionRetention(accountSelection, sessionContext)
     } else {
       // 非流式请求
       logger.info(`📄 Processing OpenAI non-stream request for model: ${req.body.model}`)
@@ -365,6 +366,7 @@ async function handleChatCompletion(req, res, apiKeyData) {
           preselectedAccount: accountSelection
         }
       )
+      await refreshSessionRetention(accountSelection, sessionContext)
 
       // 解析 Claude 响应
       let claudeData

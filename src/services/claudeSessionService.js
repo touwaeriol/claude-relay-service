@@ -121,7 +121,7 @@ async function touchAccountSession(account, sessionId, retentionSeconds) {
 
 async function ensureAccountSession(account, sessionContext, retentionSeconds) {
   const accountId = account.accountId || account.id
-  const sessionId = sessionContext.sessionId
+  const { sessionId } = sessionContext
   if (!sessionId) {
     return null
   }
@@ -140,7 +140,20 @@ async function ensureAccountSession(account, sessionContext, retentionSeconds) {
     return existing
   }
 
-  return await registerAccountSession(account, sessionId, sessionContext.userNodes, retentionSeconds)
+  return await registerAccountSession(
+    account,
+    sessionId,
+    sessionContext.userNodes,
+    retentionSeconds
+  )
+}
+
+async function touchCanonicalSession(sessionId, retentionSeconds) {
+  if (!sessionId || !retentionSeconds || retentionSeconds <= 0) {
+    return null
+  }
+  await redis.touchCanonicalSession(sessionId, retentionSeconds)
+  return true
 }
 
 function canExclusiveAccountHandle(account, sessionContext, accountSession) {
@@ -190,5 +203,6 @@ module.exports = {
   ensureAccountSession,
   touchAccountSession,
   registerAccountSession,
-  evaluateAccountEligibility
+  evaluateAccountEligibility,
+  touchCanonicalSession
 }

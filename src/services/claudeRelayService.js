@@ -8,7 +8,8 @@ const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
 const {
   buildSessionContext,
-  registerSessionForAccount
+  registerSessionForAccount,
+  refreshSessionRetention
 } = require('../utils/claudeSessionCoordinator')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
@@ -134,13 +135,14 @@ class ClaudeRelayService {
       await registerSessionForAccount(accountSelection, sessionContext)
     } catch (error) {
       if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
-        throw {
-          status: 422,
-          body: JSON.stringify({
-            error: error.code,
-            message: error.message
-          })
-        }
+        const err = new Error(error.message)
+        err.status = 422
+        err.code = error.code
+        err.body = JSON.stringify({
+          error: error.code,
+          message: error.message
+        })
+        throw err
       }
       throw error
     }
@@ -233,6 +235,8 @@ class ClaudeRelayService {
         },
         options
       )
+
+      await refreshSessionRetention(accountSelection, sessionContext)
 
       response.accountId = accountId
       response.accountType = accountType
@@ -499,14 +503,15 @@ class ClaudeRelayService {
     } catch (error) {
       if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
         const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
-        throw {
-          status: 403,
-          body: JSON.stringify({
-            error: 'upstream_rate_limited',
-            message: limitMessage
-          }),
-          accountId: error.accountId
-        }
+        const err = new Error(limitMessage)
+        err.status = 403
+        err.code = 'upstream_rate_limited'
+        err.accountId = error.accountId
+        err.body = JSON.stringify({
+          error: 'upstream_rate_limited',
+          message: limitMessage
+        })
+        throw err
       }
 
       logger.error(
@@ -1154,14 +1159,14 @@ class ClaudeRelayService {
       })
 
       let accountSelection
-      try {
-        const isOpusModelRequest =
+      let sessionContext = options.sessionContext || null
+      const isOpusModelRequest =
         typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
 
-      // 生成会      let accountSelection
+      // 生成会话哈希
+      let sessionHash
       try {
-        const sessionHash = sessionHelper.generateSessionHash(requestBody)
-        let sessionContext = options.sessionContext || null
+        sessionHash = sessionHelper.generateSessionHash(requestBody)
         if (!sessionContext) {
           sessionContext = await buildSessionContext(sessionHash, requestBody)
         }
@@ -1174,28 +1179,31 @@ class ClaudeRelayService {
             requestBody.model,
             { sessionContext }
           )
-          await registerSessionForAccount(accountSelection, sessionContext)
         }
+
+        await registerSessionForAccount(accountSelection, sessionContext)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = claudeRelayService._buildStandardRateLimitMessage(error.rateLimitEndAt)
-          throw {
-            status: 403,
-            body: JSON.stringify({
-              error: 'upstream_rate_limited',
-              message: limitMessage
-            }),
-            accountId: error.accountId
-          }
+          const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
+          const err = new Error(limitMessage)
+          err.status = 403
+          err.code = 'upstream_rate_limited'
+          err.accountId = error.accountId
+          err.body = JSON.stringify({
+            error: 'upstream_rate_limited',
+            message: limitMessage
+          })
+          throw err
         }
         if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
-          throw {
-            status: 422,
-            body: JSON.stringify({
-              error: error.code,
-              message: error.message
-            })
-          }
+          const err = new Error(error.message)
+          err.status = 422
+          err.code = error.code
+          err.body = JSON.stringify({
+            error: error.code,
+            message: error.message
+          })
+          throw err
         }
         throw error
       }
@@ -1267,6 +1275,8 @@ class ClaudeRelayService {
         options,
         isDedicatedOfficialAccount
       )
+
+      await refreshSessionRetention(accountSelection, sessionContext)
     } catch (error) {
       logger.error(`❌ Claude stream relay with usage capture failed:`, error)
       throw error

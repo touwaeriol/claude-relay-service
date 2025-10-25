@@ -34,7 +34,8 @@ class UnifiedClaudeScheduler {
     sessionContext.accountSessions = accountSessions
 
     for (const account of accounts) {
-      const exclusive = account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
+      const exclusive =
+        account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
       const retentionSeconds = parseInt(account.sessionRetentionSeconds || '0', 10)
       const accountKey = account.accountId || account.id
 
@@ -360,7 +361,10 @@ class UnifiedClaudeScheduler {
         false // 仅前缀才走 CCR：默认池不包含 CCR 账户
       )
 
-      availableAccounts = await this._applySessionEligibilityRules(availableAccounts, sessionContext)
+      availableAccounts = await this._applySessionEligibilityRules(
+        availableAccounts,
+        sessionContext
+      )
 
       if (availableAccounts.length === 0) {
         // 提供更详细的错误信息

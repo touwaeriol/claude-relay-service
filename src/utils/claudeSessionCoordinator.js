@@ -43,7 +43,7 @@ async function registerSessionForAccount(selection, sessionContext) {
     return
   }
 
-  const account = selection.account
+  const { account } = selection
   const accountId = account.accountId || account.id
   const retentionSeconds = parseInt(account.sessionRetentionSeconds || '0', 10)
 
@@ -57,8 +57,25 @@ async function registerSessionForAccount(selection, sessionContext) {
   await claudeSessionService.ensureAccountSession(account, sessionContext, retentionSeconds)
 }
 
-module.exports = {
-  buildSessionContext,
-  registerSessionForAccount
+async function refreshSessionRetention(selection, sessionContext) {
+  if (!selection || !selection.account || !sessionContext || !sessionContext.sessionId) {
+    return
+  }
+
+  const { account } = selection
+  const retentionSeconds = parseInt(account.sessionRetentionSeconds || '0', 10)
+  if (!retentionSeconds || retentionSeconds <= 0) {
+    return
+  }
+
+  await Promise.all([
+    claudeSessionService.touchCanonicalSession(sessionContext.sessionId, retentionSeconds),
+    claudeSessionService.touchAccountSession(account, sessionContext.sessionId, retentionSeconds)
+  ])
 }
 
+module.exports = {
+  buildSessionContext,
+  registerSessionForAccount,
+  refreshSessionRetention
+}

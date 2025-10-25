@@ -12,7 +12,8 @@ const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelH
 const sessionHelper = require('../utils/sessionHelper')
 const {
   buildSessionContext,
-  registerSessionForAccount
+  registerSessionForAccount,
+  refreshSessionRetention
 } = require('../utils/claudeSessionCoordinator')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
@@ -140,8 +141,9 @@ async function handleMessagesRequest(req, res) {
       const requestedModel = req.body.model
       let accountId
       let accountType
+      let selection
       try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+        selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
           requestedModel,
@@ -265,6 +267,7 @@ async function handleMessagesRequest(req, res) {
             preselectedAccount: selection
           }
         )
+        await refreshSessionRetention(selection, sessionContext)
       } else if (accountType === 'claude-console') {
         // Claude Console账号使用Console转发服务（需要传递accountId）
         await claudeConsoleRelayService.relayStreamRequestWithUsageCapture(
@@ -357,6 +360,7 @@ async function handleMessagesRequest(req, res) {
           },
           accountId
         )
+        await refreshSessionRetention(selection, sessionContext)
       } else if (accountType === 'bedrock') {
         // Bedrock账号使用Bedrock转发服务
         try {
@@ -526,8 +530,9 @@ async function handleMessagesRequest(req, res) {
       const requestedModel = req.body.model
       let accountId
       let accountType
+      let selection
       try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+        selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
           requestedModel,
@@ -629,6 +634,8 @@ async function handleMessagesRequest(req, res) {
           accountId
         )
       }
+
+      await refreshSessionRetention(selection, sessionContext)
 
       logger.info('📡 Claude API response received', {
         statusCode: response.statusCode,
@@ -999,6 +1006,8 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
         }
       })
     }
+
+    await refreshSessionRetention(selection, sessionContext)
 
     // 直接返回响应，不记录token使用量
     res.status(response.statusCode)
