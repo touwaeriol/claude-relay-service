@@ -3620,14 +3620,6 @@ const form = ref({
     props.account?.exclusiveSessionOnly !== undefined
       ? !!props.account?.exclusiveSessionOnly
       : false,
-  sessionRetentionSeconds: (() => {
-    const raw = props.account?.sessionRetentionSeconds
-    const parsed = Number(raw)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed
-    }
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  })(),
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3772,24 +3764,6 @@ const supportsExclusiveSessions = computed(() =>
   ['claude', 'claude-console'].includes(form.value.platform)
 )
 
-const sessionRetentionDays = computed(() => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return '0'
-  }
-  const days = seconds / 86400
-  const rounded = Math.round(days * 100) / 100
-  return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(2)
-})
-
-const resolveSessionRetentionSeconds = () => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  }
-  return Math.max(1, Math.floor(seconds))
-}
-
 // 初始化模型映射表
 const initModelMappings = () => {
   if (props.account?.supportedModels) {
@@ -3901,8 +3875,7 @@ const errors = ref({
   secretAccessKey: '',
   region: '',
   azureEndpoint: '',
-  deploymentName: '',
-  sessionRetentionSeconds: ''
+  deploymentName: ''
 })
 
 // 计算是否可以进入下一步
@@ -4249,9 +4222,6 @@ const handleOAuthSuccess = async (tokenInfo) => {
         queueTimeout: form.value.queueTimeout || 120
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
       data.geminiOauth = tokenInfo.tokens || tokenInfo
@@ -4493,18 +4463,6 @@ const createAccount = async () => {
 
   // 分组类型验证 - 创建账户流程修复
   if (
-    ['claude', 'claude-console'].includes(form.value.platform) &&
-    form.value.exclusiveSessionOnly
-  ) {
-    const retention = Number(form.value.sessionRetentionSeconds)
-    if (!Number.isInteger(retention) || retention <= 0) {
-      errors.value.sessionRetentionSeconds = '请填写大于 0 的会话保留秒数'
-      hasError = true
-    }
-  }
-
-  // 分组类型验证 - 创建账户流程修复
-  if (
     form.value.accountType === 'group' &&
     (!form.value.groupIds || form.value.groupIds.length === 0)
   ) {
@@ -4660,9 +4618,6 @@ const createAccount = async () => {
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
       // 添加并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -4947,9 +4902,6 @@ const updateAccount = async () => {
         manuallySet: true // 标记为手动设置
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
       // 并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -4985,9 +4937,6 @@ const updateAccount = async () => {
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       // 会话管理字段
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
       // 并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -5103,30 +5052,8 @@ const updateAccount = async () => {
 // 监听表单名称变化，清除错误
 watch(
   () => form.value.exclusiveSessionOnly,
-  (enabled) => {
-    const numeric = Number(form.value.sessionRetentionSeconds)
-    if (enabled && (!Number.isFinite(numeric) || numeric <= 0)) {
-      form.value.sessionRetentionSeconds = DEFAULT_SESSION_RETENTION_SECONDS
-    }
-    if (!enabled && errors.value.sessionRetentionSeconds) {
-      errors.value.sessionRetentionSeconds = ''
-    }
-  }
-)
-
-watch(
-  () => form.value.sessionRetentionSeconds,
-  (value) => {
-    if (!errors.value.sessionRetentionSeconds) {
-      return
-    }
-    const numeric = Number(value)
-    if (
-      !form.value.exclusiveSessionOnly ||
-      (Number.isFinite(numeric) && numeric > 0 && Number.isInteger(numeric))
-    ) {
-      errors.value.sessionRetentionSeconds = ''
-    }
+  () => {
+    // exclusiveSessionOnly changed
   }
 )
 
