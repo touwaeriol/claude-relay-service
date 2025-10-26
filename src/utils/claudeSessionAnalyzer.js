@@ -27,7 +27,7 @@ function analyzeSessionMessages(requestBody = {}) {
   const messageCount = messages.filter((m) => m && m.role !== 'system').length
 
   return {
-    digest, // 摘要串，如 "5d41402a1b7e9c4d..."
+    digest, // 摘要串，如 "-5d41402a_1b7e9c4d..."（9位单元：前缀1位+hash8位）
     isNewSession,
     messageCount
   }

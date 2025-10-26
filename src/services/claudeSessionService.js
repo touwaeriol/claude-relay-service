@@ -1,6 +1,6 @@
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
-const { findCommonPrefixLength } = require('../utils/sessionDigestHelper')
+const { validateDigestUpdate } = require('../utils/sessionDigestHelper')
 
 /**
  * 获取会话摘要
@@ -29,52 +29,39 @@ async function ensureCanonicalSession(sessionId, newDigest, retentionSeconds, ac
   const key = `claude:session:digest:${sessionId}`
   const oldDigest = await redis.get(key)
 
-  if (!oldDigest) {
-    // 新会话：直接保存
-    await redis.set(key, newDigest, 'EX', retentionSeconds)
-    logger.info(
-      `📝 New session digest created: ${sessionId.substring(0, 8)}... ` +
-        `(${newDigest.length / 8} messages)${accountId ? ` [account: ${accountId}]` : ''}`
-    )
+  // 使用封装的验证函数
+  const validation = validateDigestUpdate(oldDigest, newDigest)
 
-    return {
-      action: 'created',
-      messageCount: newDigest.length / 8
-    }
-  }
-
-  // 计算公共前缀（以8位为单元）
-  const commonUnits = findCommonPrefixLength(oldDigest, newDigest)
-
-  if (commonUnits === 0) {
-    // 无公共前缀：拒绝
+  if (!validation.valid) {
     const error = new Error(
-      `Session content mismatch: no common prefix. ` +
-        `Session: ${sessionId.substring(0, 8)}..., ` +
-        `Old: ${oldDigest.substring(0, 16)}..., ` +
-        `New: ${newDigest.substring(0, 16)}...`
+      `${validation.error.message} (Session: ${sessionId.substring(0, 8)}...)`
     )
-    error.code = 'SESSION_CONTENT_MISMATCH'
+    error.code = validation.error.code
     throw error
   }
 
-  // 有公共前缀：直接替换
+  // 更新摘要
   await redis.set(key, newDigest, 'EX', retentionSeconds)
 
-  const oldCount = oldDigest.length / 8
-  const newCount = newDigest.length / 8
-  const action = newCount > oldCount ? 'append' : newCount < oldCount ? 'rollback' : 'branch'
-
-  logger.info(
-    `🔄 Session digest updated (${action}): ${sessionId.substring(0, 8)}... ` +
-      `[${oldCount}→${newCount} messages, ${commonUnits} common]${accountId ? ` [account: ${accountId}]` : ''}`
-  )
+  // 记录日志
+  if (validation.action === 'create') {
+    logger.info(
+      `📝 New session digest created: ${sessionId.substring(0, 8)}... ` +
+        `(${validation.messageCount} messages)${accountId ? ` [account: ${accountId}]` : ''}`
+    )
+  } else {
+    logger.info(
+      `🔄 Session digest updated (${validation.action}): ${sessionId.substring(0, 8)}... ` +
+        `[${validation.oldCount}→${validation.newCount} messages, ${validation.commonUnits} common]${accountId ? ` [account: ${accountId}]` : ''}`
+    )
+  }
 
   return {
-    action,
-    commonMessages: commonUnits,
-    oldMessages: oldCount,
-    newMessages: newCount
+    action: validation.action,
+    commonMessages: validation.commonUnits || 0,
+    oldMessages: validation.oldCount || 0,
+    newMessages: validation.newCount || validation.messageCount,
+    messageCount: validation.messageCount
   }
 }
 
@@ -111,7 +98,7 @@ async function registerAccountSession(account, sessionId, digest, retentionSecon
     accountId: account.accountId || account.id,
     sessionId,
     digestLength: digest.length, // 存储摘要长度
-    digestChecksum: digest.substring(0, Math.min(16, digest.length)), // 存储前16位作为校验和
+    digestChecksum: digest.substring(0, Math.min(18, digest.length)), // 存储前2条消息（18位）作为校验和
     exclusive: account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true',
     createdAt: new Date().toISOString(),
     lastSeenAt: new Date().toISOString()
