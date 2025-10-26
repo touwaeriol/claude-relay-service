@@ -35,7 +35,7 @@ class UnifiedClaudeScheduler {
 
     const { sessionHash, isNewSession } = sessionContext
 
-    // 如果是新会话，所有账户都可用
+    // 如果是新会话，所有账户都可用（包括独占账户）
     if (isNewSession || !sessionHash) {
       return accounts
     }
@@ -43,25 +43,38 @@ class UnifiedClaudeScheduler {
     // 检查粘性会话绑定
     const stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
 
-    // 如果没有粘性会话绑定，所有账户都可用
-    if (!stickyAccountId) {
-      return accounts
-    }
-
-    // 过滤：独占账户只能处理绑定到自己的会话
+    // 过滤规则：独占账户的处理逻辑
     const filtered = []
     for (const account of accounts) {
       const accountId = account.accountId || account.id
       const exclusive =
         account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
 
-      if (exclusive && stickyAccountId !== accountId) {
+      // 非独占账户：永远可用
+      if (!exclusive) {
+        filtered.push(account)
+        continue
+      }
+
+      // 独占账户的规则：
+      // 1. 老会话无绑定 → 不能用（这是别的会话，不应调度到独占账户）
+      // 2. 老会话有绑定但不是自己 → 不能用
+      // 3. 老会话有绑定且是自己 → 可以用
+      if (!stickyAccountId) {
+        logger.debug(
+          `🛑 Skipping exclusive account ${account.name} (${accountId.substring(0, 8)}...) - old session without binding`
+        )
+        continue
+      }
+
+      if (stickyAccountId !== accountId) {
         logger.debug(
           `🛑 Skipping exclusive account ${account.name} (${accountId.substring(0, 8)}...) - session bound to ${stickyAccountId.substring(0, 8)}...`
         )
         continue
       }
 
+      // 绑定到自己的会话，可以用
       filtered.push(account)
     }
 
