@@ -284,7 +284,7 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      const processedBody = await this._processRequestBody(requestBody, account)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
@@ -596,6 +596,19 @@ class ClaudeRelayService {
         throw err
       }
 
+      if (error.code === 'SESSION_CLIENT_ID_DELETED') {
+        const err = new Error(error.message)
+        err.status = 409
+        err.code = 'session_client_id_deleted'
+        err.body = JSON.stringify({
+          error: {
+            type: 'session_client_id_deleted',
+            message: error.message
+          }
+        })
+        throw err
+      }
+
       logger.error(
         `❌ Claude relay request failed for key: ${apiKeyData.name || apiKeyData.id}:`,
         error.message
@@ -605,7 +618,7 @@ class ClaudeRelayService {
   }
 
   // 🔄 处理请求体
-  _processRequestBody(body, account = null) {
+  async _processRequestBody(body, account = null) {
     if (!body) {
       return body
     }
@@ -709,9 +722,86 @@ class ClaudeRelayService {
       delete processedBody.top_p
     }
 
-    // 处理统一的客户端标识
-    if (account && account.useUnifiedClientId === 'true' && account.unifiedClientId) {
-      this._replaceClientId(processedBody, account.unifiedClientId)
+    // 🆕 客户端ID选择逻辑（支持多客户端ID池）
+    if (
+      account &&
+      account.useUnifiedClientId === 'true' &&
+      account.unifiedClientIds &&
+      account.unifiedClientIds.length > 0
+    ) {
+      try {
+        let selectedClientId = null
+
+        if (account.unifiedClientIds.length === 1) {
+          // 只有1个，直接使用
+          selectedClientId = account.unifiedClientIds[0]
+          logger.debug(`📌 [ClientID] 单客户端ID模式: ${selectedClientId}`)
+        } else {
+          // 多个客户端ID，使用粘性会话 + Round Robin
+          const sessionHash = sessionHelper.generateSessionHash(processedBody)
+          const redisClient = redis.getRedisClient()
+          const sessionKey = `sticky_session:${sessionHash}:${account.id}`
+          const boundClientId = await redisClient.get(sessionKey)
+
+          if (boundClientId && account.unifiedClientIds.includes(boundClientId)) {
+            // ✅ 复用已绑定的客户端ID
+            selectedClientId = boundClientId
+            logger.debug(`♻️ [ClientID] 复用会话客户端ID: ${selectedClientId}`)
+
+            // 刷新TTL
+            const ttlSeconds = account.sessionRetentionSeconds || 3600
+            await redisClient.expire(sessionKey, ttlSeconds)
+          } else if (boundClientId && !account.unifiedClientIds.includes(boundClientId)) {
+            // ❌ 客户端ID已被删除
+            logger.warn(`⚠️ [ClientID] 会话绑定的客户端ID已被删除: ${boundClientId}`)
+            await redisClient.del(sessionKey) // 清理失效绑定
+
+            // 🔍 检查是否为独占会话账户
+            if (account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true) {
+              logger.error(`🚫 [ClientID] 独占会话账户的客户端ID已被删除，无法继续: ${account.id}`)
+              const error = new Error(
+                '该会话绑定的客户端ID已被删除，且当前账户仅允许独占会话。请联系管理员或重新发起新会话。'
+              )
+              error.code = 'SESSION_CLIENT_ID_DELETED'
+              throw error
+            }
+
+            // 普通账户：继续分配新的客户端ID
+            logger.info(`🔄 [ClientID] 普通账户，将重新分配新的客户端ID`)
+          }
+
+          // 🔄 使用Round Robin选择新的客户端ID
+          if (!selectedClientId) {
+            const roundRobinKey = `clientId:roundRobin:${account.id}`
+            const counter = await redisClient.incr(roundRobinKey)
+            const index = (counter - 1) % account.unifiedClientIds.length
+            selectedClientId = account.unifiedClientIds[index]
+
+            // 绑定粘性会话
+            const ttlSeconds = account.sessionRetentionSeconds || 3600
+            await redisClient.setex(sessionKey, ttlSeconds, selectedClientId)
+
+            logger.info(
+              `🎯 [ClientID] Round Robin选择: ${selectedClientId} (计数: ${counter}, 索引: ${index}/${account.unifiedClientIds.length})`
+            )
+          }
+        }
+
+        if (selectedClientId) {
+          this._replaceClientId(processedBody, selectedClientId)
+        }
+      } catch (error) {
+        // 特殊错误向上抛出
+        if (error.code === 'SESSION_CLIENT_ID_DELETED') {
+          throw error
+        }
+        logger.error(`❌ [ClientID] 客户端ID选择失败: ${error.message}`, { stack: error.stack })
+        // 降级：使用第一个
+        if (account.unifiedClientIds && account.unifiedClientIds.length > 0) {
+          this._replaceClientId(processedBody, account.unifiedClientIds[0])
+          logger.warn(`⚠️ [ClientID] 降级使用第一个客户端ID: ${account.unifiedClientIds[0]}`)
+        }
+      }
     }
 
     return processedBody
@@ -1423,7 +1513,7 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      const processedBody = await this._processRequestBody(requestBody, account)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
