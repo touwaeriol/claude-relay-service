@@ -348,7 +348,7 @@ const submit = async () => {
         dailyQuota: Number(form.value.dailyQuota || 0),
         quotaResetTime: form.value.quotaResetTime || '00:00',
         proxy: form.value.proxy || null,
-        supportedModels: buildSupportedModels(),
+        supportedModels: buildSupportedModels()
       }
       if (form.value.apiKey && form.value.apiKey.trim().length > 0) {
         updates.apiKey = form.value.apiKey
@@ -374,7 +374,7 @@ const submit = async () => {
         proxy: form.value.proxy,
         accountType: 'shared',
         dailyQuota: Number(form.value.dailyQuota || 0),
-        quotaResetTime: form.value.quotaResetTime || '00:00',
+        quotaResetTime: form.value.quotaResetTime || '00:00'
       }
       const res = await apiClient.post('/admin/ccr-accounts', payload)
       if (res.success) {

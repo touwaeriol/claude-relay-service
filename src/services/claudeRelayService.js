@@ -6,6 +6,7 @@ const ProxyHelper = require('../utils/proxyHelper')
 const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
+const concurrencyManager = require('./concurrencyManager')
 const {
   buildSessionContext,
   registerSessionForAccount,
@@ -168,6 +169,77 @@ class ClaudeRelayService {
       if (isOpusModelRequest) {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
+      }
+
+      // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
+      if (
+        (accountType === 'claude-official' || accountType === 'claude-console') &&
+        account?.concurrencyControl
+      ) {
+        try {
+          const concurrencyConfig = JSON.parse(account.concurrencyControl)
+          if (concurrencyConfig.enabled) {
+            logger.debug(
+              `🔒 Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ Acquired concurrency slot for ${accountId}`)
+          }
+        } catch (error) {
+          if (error.code === 'QUEUE_FULL') {
+            logger.warn(
+              `🚫 Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+            )
+            return {
+              statusCode: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+              body: JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: error.message,
+                details: {
+                  currentWaiting: error.currentWaiting,
+                  maxQueueSize: error.maxQueueSize
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(`⏱️ Concurrency timeout for ${accountId}: waited ${error.timeout}s`)
+            return {
+              statusCode: 503,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': Math.ceil(error.timeout / 2).toString()
+              },
+              body: JSON.stringify({
+                error: 'concurrency_timeout',
+                message: error.message,
+                details: {
+                  timeout: error.timeout
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(`🔌 Client disconnected while waiting for concurrency slot: ${accountId}`)
+            // 客户端已断开，直接返回（不发送响应）
+            return {
+              statusCode: 499,
+              headers: {},
+              body: '',
+              accountId,
+              skipResponse: true // 标记跳过响应发送
+            }
+          }
+          // 其他错误继续抛出
+          throw error
+        }
       }
 
       const isDedicatedOfficialAccount =
@@ -1220,6 +1292,82 @@ class ClaudeRelayService {
       if (isOpusModelRequest) {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
+      }
+
+      // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
+      // 从 options 获取 req/res 对象，如果没有则使用 responseStream 作为 fallback
+      const { clientRequest } = options
+      const clientResponse = options.clientResponse || responseStream
+
+      if (
+        (accountType === 'claude-official' || accountType === 'claude-console') &&
+        account?.concurrencyControl &&
+        clientRequest &&
+        clientResponse
+      ) {
+        try {
+          const concurrencyConfig = JSON.parse(account.concurrencyControl)
+          if (concurrencyConfig.enabled) {
+            logger.debug(
+              `🔒 [Stream] Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ [Stream] Acquired concurrency slot for ${accountId}`)
+          }
+        } catch (error) {
+          if (error.code === 'QUEUE_FULL') {
+            logger.warn(
+              `🚫 [Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+            )
+            // 流式响应：设置状态码和发送错误事件
+            responseStream.writeHead(429, {
+              'Content-Type': 'text/event-stream',
+              'Retry-After': '10'
+            })
+            responseStream.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: error.message
+              })}\n\n`
+            )
+            responseStream.end()
+            return
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(
+              `⏱️ [Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+            )
+            responseStream.writeHead(503, {
+              'Content-Type': 'text/event-stream',
+              'Retry-After': Math.ceil(error.timeout / 2).toString()
+            })
+            responseStream.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: 'concurrency_timeout',
+                message: error.message
+              })}\n\n`
+            )
+            responseStream.end()
+            return
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(
+              `🔌 [Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
+            )
+            // 客户端已断开，直接结束流
+            if (!responseStream.headersSent) {
+              responseStream.writeHead(499, {})
+            }
+            responseStream.end()
+            return
+          }
+          // 其他错误继续抛出
+          throw error
+        }
       }
 
       const isDedicatedOfficialAccount =

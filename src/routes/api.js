@@ -126,16 +126,7 @@ async function handleMessagesRequest(req, res) {
 
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
-      let sessionContext
-      try {
-        sessionContext = await buildSessionContext(sessionHash, req.body)
-      } catch (error) {
-        logger.warn(`⚠️ Session validation failed: ${error.message}`)
-        return res.status(422).json({
-          error: error.code || 'SESSION_VALIDATION_FAILED',
-          message: error.message
-        })
-      }
+      const sessionContext = await buildSessionContext(sessionHash, req.body)
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
@@ -164,13 +155,6 @@ async function handleMessagesRequest(req, res) {
               message: limitMessage
             })
           )
-          return
-        }
-        if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
-          res.status(422).json({
-            error: error.code,
-            message: error.message
-          })
           return
         }
         throw error
@@ -264,7 +248,9 @@ async function handleMessagesRequest(req, res) {
           null,
           {
             sessionContext,
-            preselectedAccount: selection
+            preselectedAccount: selection,
+            clientRequest: req,
+            clientResponse: res
           }
         )
         await refreshSessionRetention(selection, sessionContext)
@@ -358,7 +344,12 @@ async function handleMessagesRequest(req, res) {
               )
             }
           },
-          accountId
+          accountId,
+          null,
+          {
+            clientRequest: req,
+            clientResponse: res
+          }
         )
         await refreshSessionRetention(selection, sessionContext)
       } else if (accountType === 'bedrock') {
@@ -515,16 +506,7 @@ async function handleMessagesRequest(req, res) {
 
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
-      let sessionContext
-      try {
-        sessionContext = await buildSessionContext(sessionHash, req.body)
-      } catch (error) {
-        logger.warn(`⚠️ Session validation failed: ${error.message}`)
-        return res.status(422).json({
-          error: error.code || 'SESSION_VALIDATION_FAILED',
-          message: error.message
-        })
-      }
+      const sessionContext = await buildSessionContext(sessionHash, req.body)
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
@@ -951,15 +933,7 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
       { sessionContext }
     )
     const { accountId, accountType } = selection
-    try {
-      await registerSessionForAccount(selection, sessionContext)
-    } catch (error) {
-      logger.warn(`⚠️ Session validation failed: ${error.message}`)
-      return res.status(422).json({
-        error: error.code || 'SESSION_VALIDATION_FAILED',
-        message: error.message
-      })
-    }
+    await registerSessionForAccount(selection, sessionContext)
 
     let response
     if (accountType === 'claude-official') {

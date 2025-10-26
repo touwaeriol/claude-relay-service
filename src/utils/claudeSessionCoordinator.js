@@ -1,4 +1,3 @@
-const claudeSessionAnalyzer = require('./claudeSessionAnalyzer')
 const claudeSessionService = require('../services/claudeSessionService')
 
 /**
@@ -8,17 +7,26 @@ const claudeSessionService = require('../services/claudeSessionService')
  * @returns {Object} 会话上下文
  */
 async function buildSessionContext(sessionHash, requestBody) {
-  const analysis = claudeSessionAnalyzer.analyzeSessionMessages(requestBody)
-
   // 获取 sessionId（优先使用 metadata.user_id，否则使用 sessionHash）
   const sessionId = requestBody.metadata?.user_id || sessionHash
+
+  // 判断是否为新会话（只有user消息）
+  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
+  let isNewSession = true
+  for (const msg of messages) {
+    if (!msg || msg.role === 'system') {
+      continue
+    }
+    if (msg.role !== 'user') {
+      isNewSession = false
+      break
+    }
+  }
 
   return {
     sessionId,
     sessionHash,
-    digest: analysis.digest, // 新的摘要串
-    isNewSession: analysis.isNewSession,
-    messageCount: analysis.messageCount,
+    isNewSession,
     accountSessions: {} // 缓存账户会话数据
   }
 }
@@ -38,14 +46,6 @@ async function registerSessionForAccount(selection, sessionContext) {
     return
   }
 
-  // 确保全局会话摘要
-  await claudeSessionService.ensureCanonicalSession(
-    sessionContext.sessionId,
-    sessionContext.digest,
-    retentionSeconds,
-    account.accountId || account.id
-  )
-
   // 确保账户会话绑定
   await claudeSessionService.ensureAccountSession(account, sessionContext, retentionSeconds)
 }
@@ -64,10 +64,11 @@ async function refreshSessionRetention(selection, sessionContext) {
     return
   }
 
-  await Promise.all([
-    claudeSessionService.touchCanonicalSession(sessionContext.sessionId, retentionSeconds),
-    claudeSessionService.touchAccountSession(account, sessionContext.sessionId, retentionSeconds)
-  ])
+  await claudeSessionService.touchAccountSession(
+    account,
+    sessionContext.sessionId,
+    retentionSeconds
+  )
 }
 
 module.exports = {

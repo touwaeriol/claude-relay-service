@@ -252,15 +252,6 @@ async function handleChatCompletion(req, res, apiKeyData) {
           message: limitMessage
         })
       }
-      if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
-        return res.status(422).json({
-          error: {
-            message: error.message,
-            type: 'session_error',
-            code: error.code
-          }
-        })
-      }
       throw error
     }
     const { accountId } = accountSelection

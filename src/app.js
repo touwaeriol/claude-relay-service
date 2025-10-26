@@ -56,12 +56,6 @@ class Application {
       logger.info('🔄 Initializing pricing service...')
       await pricingService.initialize()
 
-      // 🔐 初始化 xxhash
-      logger.info('🔄 Initializing xxhash...')
-      const { initHasher } = require('./utils/sessionDigestHelper')
-      await initHasher()
-      logger.success('✅ xxhash initialized successfully')
-
       // 📋 初始化模型服务
       logger.info('🔄 Initializing model service...')
       const modelService = require('./services/modelService')

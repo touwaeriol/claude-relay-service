@@ -2334,7 +2334,9 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedClientId,
       unifiedClientId,
       expiresAt,
-      extInfo
+      extInfo,
+      // 并发控制配置（对象）
+      concurrencyControl
     } = req.body
 
     if (!name) {
@@ -2379,7 +2381,9 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedClientId: useUnifiedClientId === true, // 默认为false
       unifiedClientId: unifiedClientId || '', // 统一的客户端标识
       expiresAt: expiresAt || null, // 账户订阅到期时间
-      extInfo: extInfo || null
+      extInfo: extInfo || null,
+      // 并发控制配置（对象）
+      concurrencyControl: concurrencyControl || null
     })
 
     // 如果是分组类型，将账户添加到分组
@@ -2503,6 +2507,9 @@ router.delete('/claude-accounts/:accountId', authenticateAdmin, async (req, res)
         await accountGroupService.removeAccountFromGroup(accountId, group.id)
       }
     }
+
+    // 清理会话数据（防止Redis内存泄漏）
+    await redis.deleteAllAccountSessionData(accountId)
 
     await claudeAccountService.deleteAccount(accountId)
 

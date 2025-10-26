@@ -77,7 +77,9 @@ class ClaudeAccountService {
       expiresAt = null, // 账户订阅到期时间
       exclusiveSessionOnly = false, // 是否只允许处理自身会话
       sessionRetentionSeconds = 0, // 会话保留时间（秒）
-      extInfo = null // 额外扩展信息
+      extInfo = null, // 额外扩展信息
+      // 并发控制配置（对象）
+      concurrencyControl = null // { enabled, maxConcurrency, queueSize, queueTimeout }
     } = options
 
     const accountId = uuidv4()
@@ -147,7 +149,16 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
-        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString()
+        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: concurrencyControl
+          ? JSON.stringify({
+              enabled: concurrencyControl.enabled === true,
+              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
+              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
+              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
+            })
+          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
       }
     } else {
       // 兼容旧格式
@@ -181,7 +192,16 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
-        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString()
+        sessionRetentionSeconds: normalizedSessionRetentionSeconds.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: concurrencyControl
+          ? JSON.stringify({
+              enabled: concurrencyControl.enabled === true,
+              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
+              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
+              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
+            })
+          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
       }
     }
 
@@ -688,7 +708,9 @@ class ClaudeAccountService {
         'subscriptionExpiresAt',
         'extInfo',
         'exclusiveSessionOnly',
-        'sessionRetentionSeconds'
+        'sessionRetentionSeconds',
+        // 并发控制配置（对象）
+        'concurrencyControl'
       ]
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
@@ -749,6 +771,21 @@ class ClaudeAccountService {
             const parsed = parseInt(value, 10)
             sessionRetentionSecondsValue = Number.isFinite(parsed) ? parsed : 0
             updatedData.sessionRetentionSeconds = sessionRetentionSecondsValue.toString()
+          } else if (field === 'concurrencyControl') {
+            // 处理并发控制配置
+            updatedData[field] = value
+              ? JSON.stringify({
+                  enabled: value.enabled === true,
+                  maxConcurrency: parseInt(value.maxConcurrency, 10) || 10,
+                  queueSize: parseInt(value.queueSize, 10) || 20,
+                  queueTimeout: parseInt(value.queueTimeout, 10) || 120
+                })
+              : JSON.stringify({
+                  enabled: false,
+                  maxConcurrency: 10,
+                  queueSize: 20,
+                  queueTimeout: 120
+                })
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }
