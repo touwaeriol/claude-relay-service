@@ -1085,8 +1085,7 @@
 
                 <div v-if="form.enableConcurrencyControl" class="mt-4 space-y-4">
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >最大并发数</label
                     >
                     <input
@@ -1102,8 +1101,7 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >队列长度</label
                     >
                     <input
@@ -1119,8 +1117,7 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >等待超时 (秒)</label
                     >
                     <input
@@ -1647,41 +1644,74 @@
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                   </p>
+                  <!-- 🆕 客户端ID池管理 -->
                   <div v-if="form.useUnifiedClientId" class="mt-3">
                     <div
                       class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
                     >
                       <div class="mb-2 flex items-center justify-between">
                         <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                          >客户端标识 ID</span
+                          >客户端ID池 ({{ form.unifiedClientIds?.length || 0 }}个)</span
                         >
                         <button
-                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                           type="button"
-                          @click="regenerateClientId"
+                          @click="generateNewClientId"
+                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                         >
-                          <i class="fas fa-sync-alt mr-1" />
-                          重新生成
+                          <i class="fas fa-plus mr-1" />
+                          生成新的客户端ID
                         </button>
                       </div>
-                      <div class="flex items-center gap-2">
-                        <code
-                          class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+
+                      <div class="space-y-2">
+                        <div
+                          v-for="(clientId, index) in form.unifiedClientIds"
+                          :key="clientId"
+                          class="flex items-center gap-2 rounded bg-white p-2 dark:bg-gray-900"
                         >
-                          <span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(0, 8)
-                          }}</span
-                          ><span class="text-gray-500 dark:text-gray-500">{{
-                            form.unifiedClientId.substring(8, 56)
-                          }}</span
-                          ><span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(56)
-                          }}</span>
-                        </code>
+                          <code
+                            class="flex-1 select-all break-all font-mono text-xs text-gray-700 dark:text-gray-300"
+                          >
+                            <span class="text-blue-600 dark:text-blue-400">{{
+                              clientId.substring(0, 8)
+                            }}</span
+                            ><span class="text-gray-500 dark:text-gray-500">{{
+                              clientId.substring(8, 56)
+                            }}</span
+                            ><span class="text-blue-600 dark:text-blue-400">{{
+                              clientId.substring(56)
+                            }}</span>
+                          </code>
+                          <button
+                            type="button"
+                            @click="copyClientId(clientId)"
+                            class="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                            title="复制"
+                          >
+                            <i class="fas fa-copy" />
+                          </button>
+                          <button
+                            type="button"
+                            @click="removeClientId(index)"
+                            :disabled="form.unifiedClientIds.length === 1"
+                            :class="[
+                              'rounded px-2 py-1 text-xs',
+                              form.unifiedClientIds.length === 1
+                                ? 'cursor-not-allowed opacity-50'
+                                : 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
+                            ]"
+                            :title="
+                              form.unifiedClientIds.length === 1 ? '至少保留1个客户端ID' : '删除'
+                            "
+                          >
+                            <i class="fas fa-trash" />
+                          </button>
+                        </div>
                       </div>
+
                       <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         <i class="fas fa-info-circle mr-1 text-blue-500" />
-                        此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                        多个客户端ID将使用轮询策略分配，同一会话会粘性绑定到同一客户端ID
                       </p>
                     </div>
                   </div>
@@ -2473,41 +2503,74 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                 </p>
+                <!-- 🆕 客户端ID池管理（编辑模式） -->
                 <div v-if="form.useUnifiedClientId" class="mt-3">
                   <div
                     class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
                   >
                     <div class="mb-2 flex items-center justify-between">
                       <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                        >客户端标识 ID</span
+                        >客户端ID池 ({{ form.unifiedClientIds?.length || 0 }}个)</span
                       >
                       <button
-                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                         type="button"
-                        @click="regenerateClientId"
+                        @click="generateNewClientId"
+                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                       >
-                        <i class="fas fa-sync-alt mr-1" />
-                        重新生成
+                        <i class="fas fa-plus mr-1" />
+                        生成新的客户端ID
                       </button>
                     </div>
-                    <div class="flex items-center gap-2">
-                      <code
-                        class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+
+                    <div class="space-y-2">
+                      <div
+                        v-for="(clientId, index) in form.unifiedClientIds"
+                        :key="clientId"
+                        class="flex items-center gap-2 rounded bg-white p-2 dark:bg-gray-900"
                       >
-                        <span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(0, 8)
-                        }}</span
-                        ><span class="text-gray-500 dark:text-gray-500">{{
-                          form.unifiedClientId.substring(8, 56)
-                        }}</span
-                        ><span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(56)
-                        }}</span>
-                      </code>
+                        <code
+                          class="flex-1 select-all break-all font-mono text-xs text-gray-700 dark:text-gray-300"
+                        >
+                          <span class="text-blue-600 dark:text-blue-400">{{
+                            clientId.substring(0, 8)
+                          }}</span
+                          ><span class="text-gray-500 dark:text-gray-500">{{
+                            clientId.substring(8, 56)
+                          }}</span
+                          ><span class="text-blue-600 dark:text-blue-400">{{
+                            clientId.substring(56)
+                          }}</span>
+                        </code>
+                        <button
+                          type="button"
+                          @click="copyClientId(clientId)"
+                          class="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                          title="复制"
+                        >
+                          <i class="fas fa-copy" />
+                        </button>
+                        <button
+                          type="button"
+                          @click="removeClientId(index)"
+                          :disabled="form.unifiedClientIds.length === 1"
+                          :class="[
+                            'rounded px-2 py-1 text-xs',
+                            form.unifiedClientIds.length === 1
+                              ? 'cursor-not-allowed opacity-50'
+                              : 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
+                          ]"
+                          :title="
+                            form.unifiedClientIds.length === 1 ? '至少保留1个客户端ID' : '删除'
+                          "
+                        >
+                          <i class="fas fa-trash" />
+                        </button>
+                      </div>
                     </div>
+
                     <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                       <i class="fas fa-info-circle mr-1 text-blue-500" />
-                      此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                      多个客户端ID将使用轮询策略分配，同一会话会粘性绑定到同一客户端ID
                     </p>
                   </div>
                 </div>
@@ -3615,7 +3678,8 @@ const form = ref({
   autoStopOnWarning: props.account?.autoStopOnWarning || false, // 5小时限制自动停止调度
   useUnifiedUserAgent: props.account?.useUnifiedUserAgent || false, // 使用统一Claude Code版本
   useUnifiedClientId: props.account?.useUnifiedClientId || false, // 使用统一的客户端标识
-  unifiedClientId: props.account?.unifiedClientId || '', // 统一的客户端标识
+  // 🔄 unifiedClientIds 数组格式（统一从后端获取）
+  unifiedClientIds: props.account?.unifiedClientIds || [],
   exclusiveSessionOnly:
     props.account?.exclusiveSessionOnly !== undefined
       ? !!props.account?.exclusiveSessionOnly
@@ -4233,7 +4297,11 @@ const handleOAuthSuccess = async (tokenInfo) => {
       data.autoStopOnWarning = form.value.autoStopOnWarning || false
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
-      data.unifiedClientId = form.value.unifiedClientId || ''
+      // 🔄 转换为JSON字符串存储
+      data.unifiedClientId =
+        form.value.unifiedClientIds && form.value.unifiedClientIds.length > 0
+          ? JSON.stringify(form.value.unifiedClientIds)
+          : ''
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4560,7 +4628,11 @@ const createAccount = async () => {
       data.autoStopOnWarning = form.value.autoStopOnWarning || false
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
-      data.unifiedClientId = form.value.unifiedClientId || ''
+      // 🔄 转换为JSON字符串存储
+      data.unifiedClientId =
+        form.value.unifiedClientIds && form.value.unifiedClientIds.length > 0
+          ? JSON.stringify(form.value.unifiedClientIds)
+          : ''
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4938,7 +5010,11 @@ const updateAccount = async () => {
       data.autoStopOnWarning = form.value.autoStopOnWarning || false
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
-      data.unifiedClientId = form.value.unifiedClientId || ''
+      // 🔄 转换为JSON字符串存储
+      data.unifiedClientId =
+        form.value.unifiedClientIds && form.value.unifiedClientIds.length > 0
+          ? JSON.stringify(form.value.unifiedClientIds)
+          : ''
       // 更新订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -5727,10 +5803,39 @@ const handleUnifiedClientIdChange = () => {
   if (form.value.useUnifiedClientId) {
     // 如果启用了统一客户端标识，自动启用统一User-Agent
     form.value.useUnifiedUserAgent = true
-    // 如果没有客户端标识，自动生成一个
-    if (!form.value.unifiedClientId) {
-      form.value.unifiedClientId = generateClientId()
+    // 🆕 如果没有客户端ID，自动生成至少1个
+    if (!form.value.unifiedClientIds || form.value.unifiedClientIds.length === 0) {
+      form.value.unifiedClientIds = [generateClientId()]
     }
+  }
+}
+
+// 🆕 生成新的客户端ID
+const generateNewClientId = () => {
+  if (!form.value.unifiedClientIds) {
+    form.value.unifiedClientIds = []
+  }
+  form.value.unifiedClientIds.push(generateClientId())
+  showToast('已生成新的客户端ID', 'success')
+}
+
+// 🆕 删除客户端ID
+const removeClientId = (index) => {
+  if (form.value.unifiedClientIds.length > 1) {
+    const removedId = form.value.unifiedClientIds[index]
+    form.value.unifiedClientIds.splice(index, 1)
+    showToast(`已删除客户端ID: ${removedId.substring(0, 8)}...`, 'success')
+  }
+}
+
+// 🆕 复制客户端ID到剪贴板
+const copyClientId = async (clientId) => {
+  try {
+    await navigator.clipboard.writeText(clientId)
+    showToast('已复制到剪贴板', 'success')
+  } catch (err) {
+    console.error('复制失败:', err)
+    showToast('复制失败', 'error')
   }
 }
 

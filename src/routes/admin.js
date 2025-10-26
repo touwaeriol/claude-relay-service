@@ -2365,6 +2365,31 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Priority must be a number between 1 and 100' })
     }
 
+    // 🆕 验证客户端ID池
+    if (useUnifiedClientId && unifiedClientId) {
+      try {
+        const parsed = JSON.parse(unifiedClientId)
+        if (Array.isArray(parsed)) {
+          if (parsed.length === 0) {
+            return res.status(400).json({
+              error: '启用统一客户端标识时，至少需要1个客户端ID'
+            })
+          }
+          // 验证UUID格式
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+          for (const id of parsed) {
+            if (!uuidRegex.test(id)) {
+              return res.status(400).json({
+                error: `无效的客户端ID格式: ${id}`
+              })
+            }
+          }
+        }
+      } catch {
+        // JSON解析失败，单个字符串会被 createAccount 处理
+      }
+    }
+
     const newAccount = await claudeAccountService.createAccount({
       name,
       description,
@@ -2476,6 +2501,22 @@ router.put('/claude-accounts/:accountId', authenticateAdmin, async (req, res) =>
           // 兼容单分组模式
           await accountGroupService.addAccountToGroup(accountId, mappedUpdates.groupId, 'claude')
         }
+      }
+    }
+
+    // 🆕 验证客户端ID池
+    if (mappedUpdates.useUnifiedClientId && mappedUpdates.unifiedClientId !== undefined) {
+      try {
+        const parsed = JSON.parse(mappedUpdates.unifiedClientId)
+        if (Array.isArray(parsed)) {
+          if (parsed.length === 0) {
+            return res.status(400).json({
+              error: '启用统一客户端标识时，至少需要1个客户端ID'
+            })
+          }
+        }
+      } catch {
+        // JSON解析失败，会被 updateAccount 处理
       }
     }
 
