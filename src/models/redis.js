@@ -1572,38 +1572,6 @@ class RedisClient {
     await this.client.del(key)
   }
 
-  async getCanonicalSession(sessionId) {
-    const key = `claude:session_canonical:${sessionId}`
-    const raw = await this.client.get(key)
-    if (!raw) {
-      return null
-    }
-    try {
-      return JSON.parse(raw)
-    } catch (error) {
-      logger.error('Failed to parse canonical session data:', error)
-      return null
-    }
-  }
-
-  async setCanonicalSession(sessionId, payload, ttlSeconds = 0) {
-    const key = `claude:session_canonical:${sessionId}`
-    const data = JSON.stringify(payload)
-    if (ttlSeconds && ttlSeconds > 0) {
-      await this.client.set(key, data, 'EX', ttlSeconds)
-    } else {
-      await this.client.set(key, data)
-    }
-  }
-
-  async touchCanonicalSession(sessionId, ttlSeconds = 0) {
-    if (!ttlSeconds || ttlSeconds <= 0) {
-      return
-    }
-    const key = `claude:session_canonical:${sessionId}`
-    await this.client.expire(key, ttlSeconds)
-  }
-
   // 🧹 清理过期数据
   async cleanup() {
     try {

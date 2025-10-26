@@ -1,62 +1,36 @@
-const crypto = require('crypto')
+const { generateSessionDigest } = require('./sessionDigestHelper')
 
-function extractTextFromMessage(message) {
-  if (!message) {
-    return ''
-  }
-
-  if (typeof message.content === 'string') {
-    return message.content
-  }
-
-  if (Array.isArray(message.content)) {
-    return message.content
-      .filter((part) => part && part.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text)
-      .join('')
-  }
-
-  return ''
-}
-
-function hashText(text) {
-  if (!text) {
-    return ''
-  }
-
-  return crypto.createHash('sha256').update(text).digest('hex')
-}
-
+/**
+ * 分析会话消息，生成摘要
+ * @param {Object} requestBody - 请求体，包含 messages 数组
+ * @returns {Object} 分析结果
+ */
 function analyzeSessionMessages(requestBody = {}) {
   const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  const result = {
-    isNewSession: true,
-    userNodes: []
-  }
 
-  let index = 0
-  for (const message of messages) {
-    if (!message || message.role === 'system') {
+  // 生成摘要串
+  const digest = generateSessionDigest(messages)
+
+  // 判断是否为新会话（只有user消息）
+  let isNewSession = true
+  for (const msg of messages) {
+    if (!msg || msg.role === 'system') {
       continue
     }
-
-    const { role } = message
-    if (role !== 'user') {
-      result.isNewSession = false
+    if (msg.role !== 'user') {
+      isNewSession = false
+      break
     }
-
-    if (role === 'user') {
-      const text = extractTextFromMessage(message)
-      result.userNodes.push({
-        index,
-        hash: hashText(text)
-      })
-    }
-
-    index += 1
   }
 
-  return result
+  // 计算消息数量（除 system）
+  const messageCount = messages.filter((m) => m && m.role !== 'system').length
+
+  return {
+    digest, // 摘要串，如 "5d41402a1b7e9c4d..."
+    isNewSession,
+    messageCount
+  }
 }
 
 module.exports = {
