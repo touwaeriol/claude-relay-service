@@ -1654,9 +1654,9 @@
                           >客户端ID池 ({{ form.unifiedClientIds?.length || 0 }}个)</span
                         >
                         <button
+                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                           type="button"
                           @click="generateNewClientId"
-                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                         >
                           <i class="fas fa-plus mr-1" />
                           生成新的客户端ID
@@ -1683,26 +1683,26 @@
                             }}</span>
                           </code>
                           <button
-                            type="button"
-                            @click="copyClientId(clientId)"
                             class="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
                             title="复制"
+                            type="button"
+                            @click="copyClientId(clientId)"
                           >
                             <i class="fas fa-copy" />
                           </button>
                           <button
-                            type="button"
-                            @click="removeClientId(index)"
-                            :disabled="form.unifiedClientIds.length === 1"
                             :class="[
                               'rounded px-2 py-1 text-xs',
                               form.unifiedClientIds.length === 1
                                 ? 'cursor-not-allowed opacity-50'
                                 : 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
                             ]"
+                            :disabled="form.unifiedClientIds.length === 1"
                             :title="
                               form.unifiedClientIds.length === 1 ? '至少保留1个客户端ID' : '删除'
                             "
+                            type="button"
+                            @click="removeClientId(index)"
                           >
                             <i class="fas fa-trash" />
                           </button>
@@ -2513,9 +2513,9 @@
                         >客户端ID池 ({{ form.unifiedClientIds?.length || 0 }}个)</span
                       >
                       <button
+                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                         type="button"
                         @click="generateNewClientId"
-                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
                       >
                         <i class="fas fa-plus mr-1" />
                         生成新的客户端ID
@@ -2542,26 +2542,26 @@
                           }}</span>
                         </code>
                         <button
-                          type="button"
-                          @click="copyClientId(clientId)"
                           class="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
                           title="复制"
+                          type="button"
+                          @click="copyClientId(clientId)"
                         >
                           <i class="fas fa-copy" />
                         </button>
                         <button
-                          type="button"
-                          @click="removeClientId(index)"
-                          :disabled="form.unifiedClientIds.length === 1"
                           :class="[
                             'rounded px-2 py-1 text-xs',
                             form.unifiedClientIds.length === 1
                               ? 'cursor-not-allowed opacity-50'
                               : 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
                           ]"
+                          :disabled="form.unifiedClientIds.length === 1"
                           :title="
                             form.unifiedClientIds.length === 1 ? '至少保留1个客户端ID' : '删除'
                           "
+                          type="button"
+                          @click="removeClientId(index)"
                         >
                           <i class="fas fa-trash" />
                         </button>
@@ -3481,8 +3481,6 @@ import OAuthFlow from './OAuthFlow.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
-
-const DEFAULT_SESSION_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 const props = defineProps({
   account: {
@@ -5717,12 +5715,6 @@ const generateClientId = () => {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-// 重新生成客户端标识
-const regenerateClientId = () => {
-  form.value.unifiedClientId = generateClientId()
-  showToast('已生成新的客户端标识', 'success')
 }
 
 // 处理统一客户端标识复选框变化

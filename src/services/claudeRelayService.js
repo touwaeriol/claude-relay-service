@@ -739,7 +739,7 @@ class ClaudeRelayService {
         } else {
           // 多个客户端ID，使用粘性会话 + Round Robin
           const sessionHash = sessionHelper.generateSessionHash(processedBody)
-          const redisClient = redis.getRedisClient()
+          const redisClient = redis.getClientSafe()
           const sessionKey = `sticky_session:${sessionHash}:${account.id}`
           const boundClientId = await redisClient.get(sessionKey)
 

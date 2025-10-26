@@ -54,9 +54,11 @@ class ConcurrencyManager {
 
     /**
      * 队列计数 TTL（秒）
-     * 10分钟无活动后自动过期
+     * 1小时无活动后自动过期
+     * 注意：即使在 queueTimeout=0（永久等待）的场景下，也需要足够长的 TTL
+     * 避免所有请求阻塞等待时队列计数键过期
      */
-    this.queueCountTTL = 600 // 10分钟
+    this.queueCountTTL = 3600 // 1小时
 
     /**
      * 统计信息
@@ -126,16 +128,16 @@ class ConcurrencyManager {
     // 队列计数键
     const queueCountKey = `concurrency:queue:${resourceId}`
     const redis = this._getRedisClient()
+    const queueKeyTtlSeconds = this._getQueueTtlSeconds(queueTimeout)
 
     // 1. 入队前先"占位"——控制等待队列长度
     const waiting = await redis.incr(queueCountKey)
-    // 设置/更新 TTL（10分钟）
-    await redis.expire(queueCountKey, this.queueCountTTL)
+    // 设置/更新 TTL
+    await redis.expire(queueCountKey, queueKeyTtlSeconds)
 
     if (waiting > queueSize) {
       // 队列已满，撤销占位
-      await redis.decr(queueCountKey)
-      await redis.expire(queueCountKey, this.queueCountTTL)
+      await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
       this.stats.totalQueueFull++
 
       logger.warn(`🚫 Queue full for ${resourceId}: ${waiting - 1} waiting, max ${queueSize}`)
@@ -166,8 +168,7 @@ class ConcurrencyManager {
       this.stats.totalAcquired++
 
       // 获取成功后，减少等待计数
-      await redis.decr(queueCountKey)
-      await redis.expire(queueCountKey, this.queueCountTTL)
+      await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
 
       logger.debug(`✅ Acquired slot for ${resourceId}`)
 
@@ -190,8 +191,7 @@ class ConcurrencyManager {
     } catch (error) {
       // 获取失败时撤销占位
       if (!acquired) {
-        await redis.decr(queueCountKey)
-        await redis.expire(queueCountKey, this.queueCountTTL)
+        await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
       }
 
       // 检查是否是超时错误
@@ -247,7 +247,7 @@ class ConcurrencyManager {
    * @returns {object} Semaphore 信息对象
    */
   _getSemaphoreInfo(resourceId, config) {
-    const { maxConcurrency, queueSize } = config
+    const { maxConcurrency, queueSize, queueTimeout } = config
 
     // 计算配置哈希（用于检测配置变化）
     const configHash = this._hashConfig(config)
@@ -273,8 +273,10 @@ class ConcurrencyManager {
     }
 
     // queueTimeout > 0 时设置等待超时，否则永久等待
-    if (config.queueTimeout > 0) {
-      semaphoreOptions.acquireTimeout = config.queueTimeout * 1000
+    if (queueTimeout > 0) {
+      semaphoreOptions.acquireTimeout = queueTimeout * 1000
+    } else {
+      semaphoreOptions.acquireTimeout = Number.POSITIVE_INFINITY
     }
 
     const semaphore = new Semaphore(redis, `sem:${resourceId}`, maxConcurrency, semaphoreOptions)
@@ -285,7 +287,8 @@ class ConcurrencyManager {
       configHash,
       createdAt: Date.now(),
       maxConcurrency,
-      queueSize
+      queueSize,
+      queueTimeout
     }
 
     this.semaphores.set(resourceId, newSemaphoreInfo)
@@ -307,6 +310,37 @@ class ConcurrencyManager {
    */
   _hashConfig(config) {
     return `${config.maxConcurrency}:${config.queueSize}:${config.queueTimeout}`
+  }
+
+  /**
+   * 计算队列计数键的有效TTL，确保在长时间等待时不会提前过期
+   * @param {number} queueTimeout - 配置中的等待超时（秒）
+   * @returns {number} TTL（秒）
+   */
+  _getQueueTtlSeconds(queueTimeout) {
+    if (queueTimeout > 0) {
+      // 为避免超时前过期，额外增加 60 秒缓冲
+      return Math.max(this.queueCountTTL, queueTimeout + 60)
+    }
+    return this.queueCountTTL
+  }
+
+  /**
+   * 递减队列计数，确保不会出现负数，并在需要时重置 TTL
+   * @param {object} redis - Redis 客户端
+   * @param {string} queueCountKey - 队列计数键
+   * @param {number} ttlSeconds - TTL（秒）
+   */
+  async _decrementQueueCount(redis, queueCountKey, ttlSeconds) {
+    const remaining = await redis.decr(queueCountKey)
+
+    if (remaining <= 0) {
+      await redis.del(queueCountKey)
+      return 0
+    }
+
+    await redis.expire(queueCountKey, ttlSeconds)
+    return remaining
   }
 
   /**
