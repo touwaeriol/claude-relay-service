@@ -1542,55 +1542,6 @@ class RedisClient {
     return await this.client.del(key)
   }
 
-  // 🗂️ 会话元数据管理（独占调度）
-  async getAccountSessionMeta(accountId, sessionId) {
-    const key = `claude:session_meta:${accountId}:${sessionId}`
-    const raw = await this.client.get(key)
-    if (!raw) {
-      return null
-    }
-    try {
-      return JSON.parse(raw)
-    } catch (error) {
-      logger.error('Failed to parse account session meta:', error)
-      return null
-    }
-  }
-
-  async setAccountSessionMeta(accountId, sessionId, payload, ttlSeconds = 0) {
-    const key = `claude:session_meta:${accountId}:${sessionId}`
-    const data = JSON.stringify(payload)
-    if (ttlSeconds && ttlSeconds > 0) {
-      await this.client.set(key, data, 'EX', ttlSeconds)
-    } else {
-      await this.client.set(key, data)
-    }
-  }
-
-  async deleteAccountSessionMeta(accountId, sessionId) {
-    const key = `claude:session_meta:${accountId}:${sessionId}`
-    await this.client.del(key)
-  }
-
-  // 🗑️ 清理账户的所有会话摘要和元数据
-  async deleteAllAccountSessionData(accountId) {
-    try {
-      // 清理该账户的所有会话元数据 (claude:session_meta:accountId:*)
-      const metaPattern = `claude:session_meta:${accountId}:*`
-      const metaKeys = await this.client.keys(metaPattern)
-
-      if (metaKeys && metaKeys.length > 0) {
-        await this.client.del(...metaKeys)
-        logger.info(`🗑️ Deleted ${metaKeys.length} session metadata for account: ${accountId}`)
-      }
-
-      return metaKeys ? metaKeys.length : 0
-    } catch (error) {
-      logger.error(`Failed to delete session data for account ${accountId}:`, error)
-      return 0
-    }
-  }
-
   // 🧹 清理过期数据
   async cleanup() {
     try {

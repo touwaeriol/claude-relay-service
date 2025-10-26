@@ -2508,9 +2508,6 @@ router.delete('/claude-accounts/:accountId', authenticateAdmin, async (req, res)
       }
     }
 
-    // 清理会话数据（防止Redis内存泄漏）
-    await redis.deleteAllAccountSessionData(accountId)
-
     await claudeAccountService.deleteAccount(accountId)
 
     let message = 'Claude账号已成功删除'

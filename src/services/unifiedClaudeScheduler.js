@@ -6,7 +6,6 @@ const accountGroupService = require('./accountGroupService')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
-const claudeSessionService = require('./claudeSessionService')
 
 class UnifiedClaudeScheduler {
   constructor() {
@@ -23,45 +22,42 @@ class UnifiedClaudeScheduler {
     return schedulable !== false && schedulable !== 'false'
   }
 
+  /**
+   * 应用会话资格过滤规则（基于粘性会话）
+   * @param {Array} accounts - 候选账户列表
+   * @param {Object} sessionContext - 会话上下文 { sessionHash, isNewSession }
+   * @returns {Array} 过滤后的账户列表
+   */
   async _applySessionEligibilityRules(accounts, sessionContext) {
     if (!sessionContext || !Array.isArray(accounts) || accounts.length === 0) {
       return accounts
     }
 
-    const { sessionId, isNewSession } = sessionContext
-    const filtered = []
-    const accountSessions = sessionContext.accountSessions || {}
-    sessionContext.accountSessions = accountSessions
+    const { sessionHash, isNewSession } = sessionContext
 
+    // 如果是新会话，所有账户都可用
+    if (isNewSession || !sessionHash) {
+      return accounts
+    }
+
+    // 检查粘性会话绑定
+    const stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
+
+    // 如果没有粘性会话绑定，所有账户都可用
+    if (!stickyAccountId) {
+      return accounts
+    }
+
+    // 过滤：独占账户只能处理绑定到自己的会话
+    const filtered = []
     for (const account of accounts) {
+      const accountId = account.accountId || account.id
       const exclusive =
         account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
-      const retentionSeconds = parseInt(account.sessionRetentionSeconds || '0', 10)
-      const accountKey = account.accountId || account.id
 
-      if (exclusive && retentionSeconds <= 0) {
-        logger.warn(`⚠️ Exclusive account ${account.accountId} missing retention seconds, skipping`)
-        continue
-      }
-
-      if (!sessionId) {
-        if (!exclusive) {
-          filtered.push(account)
-        }
-        continue
-      }
-
-      if (!accountSessions[accountKey]) {
-        accountSessions[accountKey] = await claudeSessionService.getAccountSession(
-          accountKey,
-          sessionContext.sessionId
-        )
-      }
-      const hasRecordedSession = !!accountSessions[accountKey]
-
-      if (exclusive && !isNewSession && !hasRecordedSession) {
+      if (exclusive && stickyAccountId !== accountId) {
         logger.debug(
-          `🛑 Skipping exclusive account ${account.accountId} for continuation session ${sessionId}`
+          `🛑 Skipping exclusive account ${account.name} (${accountId.substring(0, 8)}...) - session bound to ${stickyAccountId.substring(0, 8)}...`
         )
         continue
       }

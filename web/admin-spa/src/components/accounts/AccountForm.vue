@@ -1702,32 +1702,8 @@
                     禁止跨账号调度
                   </span>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话摘要保留时间。
+                    开启后仅允许调度本账号的新会话或已绑定会话（会话绑定保留7天）。
                   </p>
-                  <div v-if="form.exclusiveSessionOnly" class="mt-3">
-                    <label
-                      class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                    >
-                      会话摘要保留时间（秒）
-                    </label>
-                    <input
-                      v-model.number="form.sessionRetentionSeconds"
-                      class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
-                      min="1"
-                      step="1"
-                      type="number"
-                    />
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
-                    </p>
-                    <p
-                      v-if="errors.sessionRetentionSeconds"
-                      class="mt-1 text-xs text-red-500 dark:text-red-400"
-                    >
-                      {{ errors.sessionRetentionSeconds }}
-                    </p>
-                  </div>
                 </div>
               </label>
             </div>
@@ -2551,30 +2527,8 @@
                   禁止跨账号调度
                 </span>
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  开启后仅允许调度本账号的新会话或已记录会话，请同时配置会话摘要保留时间。
+                  开启后仅允许调度本账号的新会话或已绑定会话（会话绑定保留7天）。
                 </p>
-                <div v-if="form.exclusiveSessionOnly" class="mt-3">
-                  <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    会话摘要保留时间（秒）
-                  </label>
-                  <input
-                    v-model.number="form.sessionRetentionSeconds"
-                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                    :class="{ 'border-red-500': errors.sessionRetentionSeconds }"
-                    min="1"
-                    step="1"
-                    type="number"
-                  />
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    默认 604800 秒 (≈7 天)。当前约 {{ sessionRetentionDays }} 天。
-                  </p>
-                  <p
-                    v-if="errors.sessionRetentionSeconds"
-                    class="mt-1 text-xs text-red-500 dark:text-red-400"
-                  >
-                    {{ errors.sessionRetentionSeconds }}
-                  </p>
-                </div>
               </div>
             </label>
           </div>

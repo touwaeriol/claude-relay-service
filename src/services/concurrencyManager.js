@@ -138,9 +138,7 @@ class ConcurrencyManager {
       await redis.expire(queueCountKey, this.queueCountTTL)
       this.stats.totalQueueFull++
 
-      logger.warn(
-        `🚫 Queue full for ${resourceId}: ${waiting - 1} waiting, max ${queueSize}`
-      )
+      logger.warn(`🚫 Queue full for ${resourceId}: ${waiting - 1} waiting, max ${queueSize}`)
 
       const error = new Error(
         `Queue full: ${waiting - 1} requests waiting, maximum queue size is ${queueSize}`
@@ -269,12 +267,9 @@ class ConcurrencyManager {
 
     // 创建新的 Semaphore 实例
     const redis = this._getRedisClient()
-    const semaphore = new Semaphore(redis, `sem:${resourceId}`, maxConcurrency, {
-      acquireTimeout: (config.queueTimeout || 30) * 1000, // 等待超时（毫秒）
     const semaphoreOptions = {
       lockTimeout: 300000, // 占用租约（5分钟），防止忘记释放导致死锁
       retryInterval: 100 // 重试间隔（毫秒）
-    })
     }
 
     // queueTimeout > 0 时设置等待超时，否则永久等待
