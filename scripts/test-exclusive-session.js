@@ -12,7 +12,6 @@
 
 const Redis = require('ioredis')
 const crypto = require('crypto')
-const { v4: uuidv4 } = require('uuid')
 
 // 加载配置
 require('dotenv').config()
@@ -104,7 +103,7 @@ async function testExclusiveMode(accountId, clientId) {
   console.log(`✅ 当前绑定: ${binding.sessionHash.substring(0, 16)}...`)
 
   // 创建第二个会话（应该抢占会话1）
-  await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
+  await new Promise((resolve) => setTimeout(resolve, 1000)) // 等待1秒
   const session2Content = { messages: [{ role: 'user', content: 'Session 2' }] }
   const session2Hash = calculateSessionHash(session2Content)
 
@@ -154,11 +153,15 @@ async function testNonExclusiveMode() {
 
     // 非独占模式：不绑定到客户端ID，使用粘性会话
     const stickyKey = `sticky_session:${hash}`
-    await redis.setex(stickyKey, 3600, JSON.stringify({
-      accountId,
-      clientId,
-      boundAt: new Date().toISOString()
-    }))
+    await redis.setex(
+      stickyKey,
+      3600,
+      JSON.stringify({
+        accountId,
+        clientId,
+        boundAt: new Date().toISOString()
+      })
+    )
 
     console.log(`📝 会话${i + 1} Hash: ${hash.substring(0, 16)}...`)
     console.log(`  ✅ 创建粘性会话绑定`)
@@ -208,11 +211,15 @@ async function testExclusiveSessionFiltering(accountId, clientId) {
 
     // 创建粘性会话
     const stickyKey = `sticky_session:${hash}`
-    await redis.setex(stickyKey, 3600, JSON.stringify({
-      accountId,
-      clientId,
-      boundAt: new Date().toISOString()
-    }))
+    await redis.setex(
+      stickyKey,
+      3600,
+      JSON.stringify({
+        accountId,
+        clientId,
+        boundAt: new Date().toISOString()
+      })
+    )
 
     console.log(`  📝 其他会话${i + 1}: ${hash.substring(0, 16)}...`)
   }
@@ -225,15 +232,15 @@ async function testExclusiveSessionFiltering(accountId, clientId) {
   console.log(`🔗 客户端ID当前绑定: ${binding.sessionHash.substring(0, 16)}...`)
 
   // 过滤掉非当前会话的账户
-  const shouldFilter = (sessionHash) => {
-    return binding && sessionHash !== binding.sessionHash
-  }
+  const shouldFilter = (sessionHash) => binding && sessionHash !== binding.sessionHash
 
   let filteredCount = 0
   for (let i = 0; i < otherSessions.length; i++) {
     const filtered = shouldFilter(otherSessions[i])
     console.log(`  会话${i + 1}: ${filtered ? '❌ 被过滤' : '✅ 通过'}`)
-    if (filtered) filteredCount++
+    if (filtered) {
+      filteredCount++
+    }
   }
 
   const currentPassed = !shouldFilter(currentHash)
@@ -266,11 +273,15 @@ async function testLegacySessionCompatibility(accountId, clientId) {
 
   // 只创建粘性会话，不绑定到客户端ID
   const stickyKey = `sticky_session:${legacyHash}`
-  await redis.setex(stickyKey, 3600, JSON.stringify({
-    accountId,
-    // 注意：没有 clientId 字段
-    boundAt: new Date().toISOString()
-  }))
+  await redis.setex(
+    stickyKey,
+    3600,
+    JSON.stringify({
+      accountId,
+      // 注意：没有 clientId 字段
+      boundAt: new Date().toISOString()
+    })
+  )
 
   console.log('🔗 创建旧格式的粘性会话（无客户端ID）')
 
@@ -285,7 +296,9 @@ async function testLegacySessionCompatibility(accountId, clientId) {
   // 清理
   await redis.del(stickyKey)
 
-  console.log(`\n${shouldPassFilter ? '✅' : '❌'} 旧会话兼容性${shouldPassFilter ? '正常' : '异常'}`)
+  console.log(
+    `\n${shouldPassFilter ? '✅' : '❌'} 旧会话兼容性${shouldPassFilter ? '正常' : '异常'}`
+  )
 
   return shouldPassFilter
 }
@@ -344,11 +357,11 @@ async function runTests() {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     console.log('📊 测试结果汇总')
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-    console.log(`✅ 通过: ${results.filter(r => r).length}/${results.length}`)
-    console.log(`❌ 失败: ${results.filter(r => !r).length}/${results.length}`)
+    console.log(`✅ 通过: ${results.filter((r) => r).length}/${results.length}`)
+    console.log(`❌ 失败: ${results.filter((r) => !r).length}/${results.length}`)
     console.log()
 
-    const allPassed = results.every(r => r)
+    const allPassed = results.every((r) => r)
     if (allPassed) {
       console.log('🎉 所有测试通过！')
       process.exit(0)
@@ -356,7 +369,6 @@ async function runTests() {
       console.log('❌ 部分测试失败')
       process.exit(1)
     }
-
   } catch (error) {
     console.error('❌ 测试失败:', error.message)
     console.error(error.stack)

@@ -228,7 +228,10 @@ async function testDifferentSessionsIndependence() {
     log('blue', `\n会话${i + 1}: ${session.hash.substring(0, 12)}...`)
     log('yellow', `  绑定客户端ID: ${session.clientId}`)
     log('yellow', `  10次请求唯一ID数: ${uniqueIds.size}`)
-    log(session.stable ? 'green' : 'red', `  ${session.stable ? '✓' : '✗'} ${session.stable ? '稳定' : '不稳定'}`)
+    log(
+      session.stable ? 'green' : 'red',
+      `  ${session.stable ? '✓' : '✗'} ${session.stable ? '稳定' : '不稳定'}`
+    )
   }
 
   // 验证所有会话都稳定
