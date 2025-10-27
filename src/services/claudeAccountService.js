@@ -88,31 +88,6 @@ class ClaudeAccountService {
 
     const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
 
-    // 🔄 unifiedClientId 处理：确保至少有1个
-    let finalUnifiedClientId = unifiedClientId
-    if (useUnifiedClientId) {
-      if (!unifiedClientId || unifiedClientId.trim() === '') {
-        // 自动生成1个客户端ID
-        finalUnifiedClientId = JSON.stringify([crypto.randomUUID()])
-        logger.info(`🆕 自动生成客户端ID池（1个）`)
-      } else {
-        // 验证是否为有效数组或字符串
-        try {
-          const parsed = JSON.parse(unifiedClientId)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            finalUnifiedClientId = unifiedClientId // 已经是JSON数组
-          } else {
-            finalUnifiedClientId = JSON.stringify([crypto.randomUUID()])
-            logger.info(`🆕 无效的客户端ID，自动生成新的`)
-          }
-        } catch {
-          // 单个字符串，转换为数组
-          finalUnifiedClientId = JSON.stringify([unifiedClientId])
-          logger.info(`🔄 单个客户端ID转换为数组格式`)
-        }
-      }
-    }
-
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
       accountData = {
@@ -140,7 +115,7 @@ class ClaudeAccountService {
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
         useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
-        unifiedClientId: finalUnifiedClientId || '', // 统一的客户端标识（JSON数组字符串）
+        unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 优先使用手动设置的订阅信息，否则使用OAuth数据中的，否则默认为空
         subscriptionInfo: subscriptionInfo
           ? JSON.stringify(subscriptionInfo)
@@ -188,7 +163,7 @@ class ClaudeAccountService {
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
         useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
-        unifiedClientId: finalUnifiedClientId || '', // 统一的客户端标识（JSON数组字符串）
+        unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 手动设置的订阅信息
         subscriptionInfo: subscriptionInfo ? JSON.stringify(subscriptionInfo) : '',
         // 账户订阅到期时间
@@ -461,24 +436,7 @@ class ClaudeAccountService {
         return null
       }
 
-      // 🔄 unifiedClientId 字段转换：字符串 → 数组
-      let unifiedClientIds = []
-      if (accountData.unifiedClientId) {
-        try {
-          // 尝试解析为JSON数组
-          const parsed = JSON.parse(accountData.unifiedClientId)
-          unifiedClientIds = Array.isArray(parsed) ? parsed : [accountData.unifiedClientId]
-        } catch {
-          // 解析失败，视为单个字符串
-          unifiedClientIds = [accountData.unifiedClientId]
-        }
-      }
-
-      return {
-        ...accountData,
-        // 新增：统一返回数组格式（供前端和业务逻辑使用）
-        unifiedClientIds
-      }
+      return accountData
     } catch (error) {
       logger.error('❌ Failed to get Claude account:', error)
       return null
@@ -564,17 +522,6 @@ class ClaudeAccountService {
           const authType = isOAuth ? 'oauth' : 'setup-token'
           const parsedExtInfo = this._safeParseJson(account.extInfo)
 
-          // 🔄 unifiedClientId 字段转换：字符串 → 数组
-          let unifiedClientIds = []
-          if (account.unifiedClientId) {
-            try {
-              const parsed = JSON.parse(account.unifiedClientId)
-              unifiedClientIds = Array.isArray(parsed) ? parsed : [account.unifiedClientId]
-            } catch {
-              unifiedClientIds = [account.unifiedClientId]
-            }
-          }
-
           return {
             id: account.id,
             name: account.name,
@@ -635,8 +582,7 @@ class ClaudeAccountService {
             useUnifiedUserAgent: account.useUnifiedUserAgent === 'true', // 默认为false
             // 添加统一客户端标识设置
             useUnifiedClientId: account.useUnifiedClientId === 'true', // 默认为false
-            unifiedClientId: account.unifiedClientId || '', // 原始存储格式（JSON字符串）
-            unifiedClientIds, // 🆕 数组格式（供前端使用）
+            unifiedClientId: account.unifiedClientId || '', // 统一的客户端标识
             // 添加停止原因
             stoppedReason: account.stoppedReason || null,
             // 扩展信息
@@ -790,47 +736,6 @@ class ClaudeAccountService {
           } else if (field === 'exclusiveSessionOnly') {
             exclusiveFlag = value === true || value === 'true'
             updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
-          } else if (field === 'unifiedClientId') {
-            // 🔄 unifiedClientId 特殊处理：验证并标准化存储格式
-            const useUnifiedClientId =
-              updates.useUnifiedClientId !== undefined
-                ? updates.useUnifiedClientId === true || updates.useUnifiedClientId === 'true'
-                : updatedData.useUnifiedClientId === 'true'
-
-            if (useUnifiedClientId) {
-              // 确保至少有1个客户端ID
-              try {
-                const parsed = JSON.parse(value)
-                if (Array.isArray(parsed)) {
-                  if (parsed.length === 0) {
-                    throw new Error('启用统一客户端标识时，至少需要1个客户端ID')
-                  }
-                  updatedData[field] = value // 有效的JSON数组
-                } else {
-                  // 不是数组，转换为数组
-                  updatedData[field] = JSON.stringify([value])
-                }
-              } catch (error) {
-                if (error.message.includes('至少需要1个')) {
-                  throw error
-                }
-                // 解析失败，视为单个字符串
-                if (value && value.trim() !== '') {
-                  updatedData[field] = JSON.stringify([value])
-                } else {
-                  throw new Error('启用统一客户端标识时，客户端ID不能为空')
-                }
-              }
-            } else {
-              updatedData[field] = value
-            }
-          } else if (field === 'useUnifiedClientId') {
-            updatedData[field] = value.toString()
-            // 如果刚启用且没有客户端ID，自动生成
-            if ((value === true || value === 'true') && !updatedData.unifiedClientId) {
-              updatedData.unifiedClientId = JSON.stringify([crypto.randomUUID()])
-              logger.info(`🆕 自动生成客户端ID池（1个）`)
-            }
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
             updatedData[field] = value
