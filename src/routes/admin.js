@@ -2335,6 +2335,9 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       unifiedClientId,
       expiresAt,
       extInfo,
+      // 🔒 独占会话配置
+      exclusiveSessionOnly,
+      enableMessageDigest,
       // 并发控制配置（对象）
       concurrencyControl
     } = req.body
@@ -2382,6 +2385,9 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       unifiedClientId: unifiedClientId || '', // 统一的客户端标识
       expiresAt: expiresAt || null, // 账户订阅到期时间
       extInfo: extInfo || null,
+      // 🔒 独占会话配置
+      exclusiveSessionOnly: exclusiveSessionOnly === true, // 是否只允许处理自身会话
+      enableMessageDigest: enableMessageDigest === true, // 是否启用消息摘要验证
       // 并发控制配置（对象）
       concurrencyControl: concurrencyControl || null
     })
@@ -2761,7 +2767,11 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       accountType,
       groupId,
       dailyQuota,
-      quotaResetTime
+      quotaResetTime,
+      // 🔒 独占会话和并发控制
+      exclusiveSessionOnly,
+      enableMessageDigest,
+      concurrencyControl
     } = req.body
 
     if (!name || !apiUrl || !apiKey) {
@@ -2798,7 +2808,11 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       proxy,
       accountType: accountType || 'shared',
       dailyQuota: dailyQuota || 0,
-      quotaResetTime: quotaResetTime || '00:00'
+      quotaResetTime: quotaResetTime || '00:00',
+      // 🔒 独占会话和并发控制
+      exclusiveSessionOnly: exclusiveSessionOnly === true,
+      enableMessageDigest: enableMessageDigest === true,
+      concurrencyControl: concurrencyControl || null
     })
 
     // 如果是分组类型，将账户添加到分组（CCR 归属 Claude 平台分组）

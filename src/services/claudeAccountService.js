@@ -76,6 +76,7 @@ class ClaudeAccountService {
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
       exclusiveSessionOnly = false, // 是否只允许处理自身会话
+      enableMessageDigest = false, // 是否启用消息摘要验证
       extInfo = null, // 额外扩展信息
       // 并发控制配置（对象）
       concurrencyControl = null // { enabled, maxConcurrency, queueSize, queueTimeout }
@@ -87,6 +88,7 @@ class ClaudeAccountService {
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
 
     const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
+    const digestEnabled = enableMessageDigest === true || enableMessageDigest === 'true'
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -127,6 +129,7 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
+        enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
         concurrencyControl: concurrencyControl
           ? JSON.stringify({
@@ -171,6 +174,7 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
+        enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
         concurrencyControl: concurrencyControl
           ? JSON.stringify({
@@ -682,6 +686,7 @@ class ClaudeAccountService {
         'subscriptionExpiresAt',
         'extInfo',
         'exclusiveSessionOnly',
+        'enableMessageDigest',
         // 并发控制配置（对象）
         'concurrencyControl'
       ]
@@ -736,6 +741,10 @@ class ClaudeAccountService {
           } else if (field === 'exclusiveSessionOnly') {
             exclusiveFlag = value === true || value === 'true'
             updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+          } else if (field === 'enableMessageDigest') {
+            // 处理消息摘要验证开关，确保只有在 exclusiveSessionOnly 为 true 时才能启用
+            const digestFlag = value === true || value === 'true'
+            updatedData.enableMessageDigest = digestFlag.toString()
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
             updatedData[field] = value
@@ -759,6 +768,11 @@ class ClaudeAccountService {
 
       // 设置 exclusiveSessionOnly 标志
       updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+
+      // 如果 exclusiveSessionOnly 为 false，强制 enableMessageDigest 为 false
+      if (!exclusiveFlag) {
+        updatedData.enableMessageDigest = 'false'
+      }
 
       // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (updates.refreshToken && !oldRefreshToken && updates.refreshToken.trim()) {

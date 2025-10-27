@@ -24,7 +24,8 @@ async function buildSessionContext(sessionHash, requestBody) {
 
   return {
     sessionHash,
-    isNewSession
+    isNewSession,
+    requestBody // ✅ 保留原始请求体，用于摘要验证
   }
 }
 

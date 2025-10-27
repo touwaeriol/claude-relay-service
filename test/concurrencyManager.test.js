@@ -415,7 +415,7 @@ describe('ConcurrencyManager', () => {
       expect(globalStats).toMatchObject({
         totalCreated: 1,
         totalAcquired: 1,
-        totalSemas: 1,
+        totalSemaphores: 1, // ✅ 修正字段名
         maxInstances: 1000
       })
     })

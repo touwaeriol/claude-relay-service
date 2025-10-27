@@ -1085,8 +1085,7 @@
 
                 <div v-if="form.enableConcurrencyControl" class="mt-4 space-y-4">
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >最大并发数</label
                     >
                     <input
@@ -1102,8 +1101,7 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >队列长度</label
                     >
                     <input
@@ -1119,8 +1117,7 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >等待超时 (秒)</label
                     >
                     <input
@@ -1689,8 +1686,9 @@
               </label>
             </div>
 
-            <!-- 限制跨账号调度和会话保留时间配置（创建模式） -->
-            <div v-if="supportsExclusiveSessions" class="mt-4">
+            <!-- 独占会话配置（创建模式） -->
+            <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
+              <!-- 禁止跨账号调度 -->
               <label class="flex items-start">
                 <input
                   v-model="form.exclusiveSessionOnly"
@@ -1706,6 +1704,28 @@
                   </p>
                 </div>
               </label>
+
+              <!-- 校验会话摘要 -->
+              <div
+                v-if="form.exclusiveSessionOnly"
+                class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
+              >
+                <label class="flex items-start">
+                  <input
+                    v-model="form.enableMessageDigest"
+                    class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                    type="checkbox"
+                  />
+                  <div class="ml-3 flex-1">
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      校验会话摘要
+                    </span>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -2515,7 +2535,9 @@
             </label>
           </div>
 
-          <div v-if="supportsExclusiveSessions" class="mt-4">
+          <!-- 独占会话配置（编辑模式） -->
+          <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
+            <!-- 禁止跨账号调度 -->
             <label class="flex items-start">
               <input
                 v-model="form.exclusiveSessionOnly"
@@ -2531,6 +2553,28 @@
                 </p>
               </div>
             </label>
+
+            <!-- 校验会话摘要 -->
+            <div
+              v-if="form.exclusiveSessionOnly"
+              class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
+            >
+              <label class="flex items-start">
+                <input
+                  v-model="form.enableMessageDigest"
+                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                />
+                <div class="ml-3 flex-1">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    校验会话摘要
+                  </span>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
@@ -3419,8 +3463,6 @@ import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
 
-const DEFAULT_SESSION_RETENTION_SECONDS = 7 * 24 * 60 * 60
-
 const props = defineProps({
   account: {
     type: Object,
@@ -3620,14 +3662,8 @@ const form = ref({
     props.account?.exclusiveSessionOnly !== undefined
       ? !!props.account?.exclusiveSessionOnly
       : false,
-  sessionRetentionSeconds: (() => {
-    const raw = props.account?.sessionRetentionSeconds
-    const parsed = Number(raw)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed
-    }
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  })(),
+  enableMessageDigest:
+    props.account?.enableMessageDigest !== undefined ? !!props.account?.enableMessageDigest : false,
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3768,27 +3804,21 @@ const commonModels = [
 // 模型映射表数据
 const modelMappings = ref([])
 
-const supportsExclusiveSessions = computed(() =>
-  ['claude', 'claude-console'].includes(form.value.platform)
-)
-
-const sessionRetentionDays = computed(() => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return '0'
+// 判断是否支持独占会话配置（仅 Claude Setup Token 支持）
+const supportsExclusiveSessions = computed(() => {
+  // 必须是 claude 平台
+  if (form.value.platform !== 'claude') {
+    return false
   }
-  const days = seconds / 86400
-  const rounded = Math.round(days * 100) / 100
-  return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(2)
+
+  // 创建模式：默认不显示（因为还不知道是否是 Setup Token）
+  if (!props.account) {
+    return false
+  }
+
+  // 编辑模式：必须是 setup-token 类型
+  return props.account.authType === 'setup-token'
 })
-
-const resolveSessionRetentionSeconds = () => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  }
-  return Math.max(1, Math.floor(seconds))
-}
 
 // 初始化模型映射表
 const initModelMappings = () => {
@@ -3901,8 +3931,7 @@ const errors = ref({
   secretAccessKey: '',
   region: '',
   azureEndpoint: '',
-  deploymentName: '',
-  sessionRetentionSeconds: ''
+  deploymentName: ''
 })
 
 // 计算是否可以进入下一步
@@ -4249,9 +4278,9 @@ const handleOAuthSuccess = async (tokenInfo) => {
         queueTimeout: form.value.queueTimeout || 120
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
       data.geminiOauth = tokenInfo.tokens || tokenInfo
@@ -4493,18 +4522,6 @@ const createAccount = async () => {
 
   // 分组类型验证 - 创建账户流程修复
   if (
-    ['claude', 'claude-console'].includes(form.value.platform) &&
-    form.value.exclusiveSessionOnly
-  ) {
-    const retention = Number(form.value.sessionRetentionSeconds)
-    if (!Number.isInteger(retention) || retention <= 0) {
-      errors.value.sessionRetentionSeconds = '请填写大于 0 的会话保留秒数'
-      hasError = true
-    }
-  }
-
-  // 分组类型验证 - 创建账户流程修复
-  if (
     form.value.accountType === 'group' &&
     (!form.value.groupIds || form.value.groupIds.length === 0)
   ) {
@@ -4660,9 +4677,9 @@ const createAccount = async () => {
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 添加并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -4947,9 +4964,9 @@ const updateAccount = async () => {
         manuallySet: true // 标记为手动设置
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -4985,9 +5002,9 @@ const updateAccount = async () => {
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       // 会话管理字段
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 并发控制配置
       data.concurrencyControl = {
         enabled: form.value.enableConcurrencyControl || false,
@@ -5099,36 +5116,6 @@ const updateAccount = async () => {
     loading.value = false
   }
 }
-
-// 监听表单名称变化，清除错误
-watch(
-  () => form.value.exclusiveSessionOnly,
-  (enabled) => {
-    const numeric = Number(form.value.sessionRetentionSeconds)
-    if (enabled && (!Number.isFinite(numeric) || numeric <= 0)) {
-      form.value.sessionRetentionSeconds = DEFAULT_SESSION_RETENTION_SECONDS
-    }
-    if (!enabled && errors.value.sessionRetentionSeconds) {
-      errors.value.sessionRetentionSeconds = ''
-    }
-  }
-)
-
-watch(
-  () => form.value.sessionRetentionSeconds,
-  (value) => {
-    if (!errors.value.sessionRetentionSeconds) {
-      return
-    }
-    const numeric = Number(value)
-    if (
-      !form.value.exclusiveSessionOnly ||
-      (Number.isFinite(numeric) && numeric > 0 && Number.isInteger(numeric))
-    ) {
-      errors.value.sessionRetentionSeconds = ''
-    }
-  }
-)
 
 // 监听表单名称变化，清除错误
 watch(
@@ -5569,6 +5556,10 @@ watch(
         useUnifiedUserAgent: newAccount.useUnifiedUserAgent || false,
         useUnifiedClientId: newAccount.useUnifiedClientId || false,
         unifiedClientId: newAccount.unifiedClientId || '',
+        exclusiveSessionOnly:
+          newAccount.exclusiveSessionOnly !== undefined ? !!newAccount.exclusiveSessionOnly : false,
+        enableMessageDigest:
+          newAccount.enableMessageDigest !== undefined ? !!newAccount.enableMessageDigest : false,
         groupId: groupId,
         groupIds: [],
         projectId: newAccount.projectId || '',
@@ -5813,6 +5804,16 @@ watch(
   (newPlatform) => {
     if (newPlatform === 'claude') {
       fetchUnifiedUserAgent()
+    }
+  }
+)
+
+// 监听 exclusiveSessionOnly 变化，关闭时自动关闭 enableMessageDigest
+watch(
+  () => form.value.exclusiveSessionOnly,
+  (newValue) => {
+    if (!newValue && form.value.enableMessageDigest) {
+      form.value.enableMessageDigest = false
     }
   }
 )
