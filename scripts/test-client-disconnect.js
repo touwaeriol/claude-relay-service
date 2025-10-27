@@ -108,7 +108,7 @@ async function testAbort() {
           'Content-Type': 'application/json'
         }
       },
-      (res) => {
+      (_res) => {
         // 不应该到这里
         console.log('⚠️ 收到响应（不应该）')
       }
@@ -171,7 +171,7 @@ async function testTimeout() {
         },
         timeout: 1000 // 1 秒超时
       },
-      (res) => {
+      (_res) => {
         console.log('⚠️ 收到响应')
       }
     )
@@ -237,7 +237,7 @@ async function testDestroy() {
           'Content-Type': 'application/json'
         }
       },
-      (res) => {
+      (_res) => {
         console.log('⚠️ 收到响应（不应该）')
       }
     )

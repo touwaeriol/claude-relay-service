@@ -1691,6 +1691,14 @@
                             <i class="fas fa-copy" />
                           </button>
                           <button
+                            class="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+                            title="刷新"
+                            type="button"
+                            @click="refreshClientId(index)"
+                          >
+                            <i class="fas fa-sync" />
+                          </button>
+                          <button
                             :class="[
                               'rounded px-2 py-1 text-xs',
                               form.unifiedClientIds.length === 1
@@ -2548,6 +2556,14 @@
                           @click="copyClientId(clientId)"
                         >
                           <i class="fas fa-copy" />
+                        </button>
+                        <button
+                          class="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20"
+                          title="刷新"
+                          type="button"
+                          @click="refreshClientId(index)"
+                        >
+                          <i class="fas fa-sync" />
                         </button>
                         <button
                           :class="[
@@ -5742,8 +5758,29 @@ const generateNewClientId = () => {
 const removeClientId = (index) => {
   if (form.value.unifiedClientIds.length > 1) {
     const removedId = form.value.unifiedClientIds[index]
-    form.value.unifiedClientIds.splice(index, 1)
-    showToast(`已删除客户端ID: ${removedId.substring(0, 8)}...`, 'success')
+    const confirmed = confirm(
+      `确认删除客户端ID?\n\n${removedId}\n\n此操作不可恢复，已绑定此ID的会话将自动重新分配新的客户端ID。`
+    )
+    if (confirmed) {
+      form.value.unifiedClientIds.splice(index, 1)
+      showToast(`已删除客户端ID: ${removedId.substring(0, 8)}...`, 'success')
+    }
+  }
+}
+
+// 🆕 刷新指定索引的客户端ID
+const refreshClientId = (index) => {
+  const oldId = form.value.unifiedClientIds[index]
+  const confirmed = confirm(
+    `确认刷新客户端ID?\n\n旧ID: ${oldId}\n\n此操作将生成新的客户端ID替换当前ID，已绑定此ID的会话将自动重新分配新的客户端ID。`
+  )
+  if (confirmed) {
+    const newId = generateClientId()
+    form.value.unifiedClientIds[index] = newId
+    showToast(
+      `已刷新客户端ID: ${oldId.substring(0, 8)}... → ${newId.substring(0, 8)}...`,
+      'success'
+    )
   }
 }
 
