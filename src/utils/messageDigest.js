@@ -60,6 +60,10 @@ class MessageDigestHelper {
    * @returns {string} - 用于哈希的内容
    */
   _getBlockHashContent(block) {
+    if (!block) {
+      return ''
+    }
+
     if (typeof block === 'string') {
       return block
     }

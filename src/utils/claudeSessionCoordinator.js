@@ -42,9 +42,18 @@ async function registerSessionForAccount(selection, sessionContext) {
   }
 
   // 获取账户ID
-  const accountId = selection?.accountId || selection?.account?.id
+  let accountId = selection?.accountId || selection?.account?.id
+
+  if (!accountId && sessionContext.sessionHash) {
+    try {
+      accountId = await redis.getSessionAccountMapping(sessionContext.sessionHash)
+    } catch (error) {
+      logger.warn('⚠️ Failed to read existing session mapping:', error)
+    }
+  }
+
   if (!accountId) {
-    logger.warn('⚠️ registerSessionForAccount: No accountId found in selection')
+    logger.warn('⚠️ registerSessionForAccount: No accountId resolved for session binding')
     return
   }
 
@@ -75,11 +84,6 @@ async function refreshSessionRetention(selection, sessionContext) {
     return
   }
 
-  const accountId = selection?.accountId || selection?.account?.id
-  if (!accountId) {
-    return
-  }
-
   // 检查续期阈值配置
   const renewalThresholdMinutes = config.session?.renewalThresholdMinutes || 0
   if (renewalThresholdMinutes <= 0) {
@@ -87,20 +91,11 @@ async function refreshSessionRetention(selection, sessionContext) {
     return
   }
 
-  const stickyTtlHours = config.session?.stickyTtlHours || 168
-  const ttl = stickyTtlHours * 3600
-
   try {
-    // 获取当前 TTL
-    const sessionKey = `sticky_session:${sessionContext.sessionHash}`
-    const currentTtl = await redis.getClient().ttl(sessionKey)
-
-    // 如果剩余时间少于阈值，刷新 TTL
-    const renewalThresholdSeconds = renewalThresholdMinutes * 60
-    if (currentTtl > 0 && currentTtl < renewalThresholdSeconds) {
-      await redis.setSessionAccountMapping(sessionContext.sessionHash, accountId, ttl)
+    const renewed = await redis.extendSessionAccountMappingTTL(sessionContext.sessionHash)
+    if (renewed) {
       logger.debug(
-        `🔄 Refreshed session ${sessionContext.sessionHash.substring(0, 8)}... retention (TTL: ${stickyTtlHours}h)`
+        `🔄 Refreshed session ${sessionContext.sessionHash.substring(0, 8)}... retention via Redis helper`
       )
     }
   } catch (error) {
