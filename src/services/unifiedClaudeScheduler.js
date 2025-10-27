@@ -33,7 +33,7 @@ class UnifiedClaudeScheduler {
       return accounts
     }
 
-    const { sessionHash, isNewSession } = sessionContext
+    const { sessionHash, isNewSession, requestBody } = sessionContext
 
     // 如果是新会话，所有账户都可用（包括独占账户）
     if (isNewSession || !sessionHash) {
@@ -41,7 +41,7 @@ class UnifiedClaudeScheduler {
     }
 
     // 检查粘性会话绑定
-    const stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
+    let stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
 
     // 过滤规则：独占账户的处理逻辑
     const filtered = []
@@ -74,7 +74,26 @@ class UnifiedClaudeScheduler {
         continue
       }
 
-      // 绑定到自己的会话，可以用
+      // 绑定到自己的会话，进行摘要验证（如果启用了）
+      const validationResult = await this._validateExclusiveAccountDigest(
+        account,
+        sessionHash,
+        requestBody.messages
+      )
+
+      if (!validationResult.valid) {
+        logger.warn(
+          `🛑 Exclusive account ${account.name} digest validation failed - clearing binding`
+        )
+
+        // 清除粘性会话绑定
+        await redis.delSessionAccountMapping(sessionHash)
+        stickyAccountId = null // 更新局部变量，允许其他账户绑定
+
+        continue // 跳过此账户
+      }
+
+      // 摘要验证通过（或未启用），可以用
       filtered.push(account)
     }
 
@@ -238,7 +257,8 @@ class UnifiedClaudeScheduler {
             groupId,
             sessionHash,
             effectiveModel,
-            vendor === 'ccr'
+            vendor === 'ccr',
+            sessionContext
           )
         }
 
@@ -263,12 +283,38 @@ class UnifiedClaudeScheduler {
             if (isOpusRequest) {
               await claudeAccountService.clearExpiredOpusRateLimit(boundAccount.id)
             }
-            logger.info(
-              `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId}) for API key ${apiKeyData.name}`
-            )
-            return {
-              accountId: apiKeyData.claudeAccountId,
-              accountType: 'claude-official'
+
+            // 验证消息摘要（如果是独占账户且启用了验证）
+            if (sessionHash && sessionContext?.requestBody?.messages) {
+              const validationResult = await this._validateExclusiveAccountDigest(
+                boundAccount,
+                sessionHash,
+                sessionContext.requestBody.messages
+              )
+
+              if (!validationResult.valid) {
+                logger.warn(
+                  `🛑 Dedicated Claude OAuth account ${boundAccount.name} digest validation failed, falling back to pool`
+                )
+                // Fallback到共享池，不抛出错误，继续执行
+              } else {
+                logger.info(
+                  `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId}) for API key ${apiKeyData.name}`
+                )
+                return {
+                  accountId: apiKeyData.claudeAccountId,
+                  accountType: 'claude-official'
+                }
+              }
+            } else {
+              // 没有会话信息或消息，直接返回
+              logger.info(
+                `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId}) for API key ${apiKeyData.name}`
+              )
+              return {
+                accountId: apiKeyData.claudeAccountId,
+                accountType: 'claude-official'
+              }
             }
           }
         } else {
@@ -289,12 +335,37 @@ class UnifiedClaudeScheduler {
           boundConsoleAccount.status === 'active' &&
           this._isSchedulable(boundConsoleAccount.schedulable)
         ) {
-          logger.info(
-            `🎯 Using bound dedicated Claude Console account: ${boundConsoleAccount.name} (${apiKeyData.claudeConsoleAccountId}) for API key ${apiKeyData.name}`
-          )
-          return {
-            accountId: apiKeyData.claudeConsoleAccountId,
-            accountType: 'claude-console'
+          // 验证消息摘要（如果是独占账户且启用了验证）
+          if (sessionHash && sessionContext?.requestBody?.messages) {
+            const validationResult = await this._validateExclusiveAccountDigest(
+              boundConsoleAccount,
+              sessionHash,
+              sessionContext.requestBody.messages
+            )
+
+            if (!validationResult.valid) {
+              logger.warn(
+                `🛑 Dedicated Claude Console account ${boundConsoleAccount.name} digest validation failed, falling back to pool`
+              )
+              // Fallback到共享池，不抛出错误，继续执行
+            } else {
+              logger.info(
+                `🎯 Using bound dedicated Claude Console account: ${boundConsoleAccount.name} (${apiKeyData.claudeConsoleAccountId}) for API key ${apiKeyData.name}`
+              )
+              return {
+                accountId: apiKeyData.claudeConsoleAccountId,
+                accountType: 'claude-console'
+              }
+            }
+          } else {
+            // 没有会话信息或消息，直接返回
+            logger.info(
+              `🎯 Using bound dedicated Claude Console account: ${boundConsoleAccount.name} (${apiKeyData.claudeConsoleAccountId}) for API key ${apiKeyData.name}`
+            )
+            return {
+              accountId: apiKeyData.claudeConsoleAccountId,
+              accountType: 'claude-console'
+            }
           }
         } else {
           logger.warn(
@@ -1208,7 +1279,8 @@ class UnifiedClaudeScheduler {
     groupId,
     sessionHash = null,
     requestedModel = null,
-    allowCcr = false
+    allowCcr = false,
+    sessionContext = null
   ) {
     try {
       // 获取分组信息
@@ -1350,8 +1422,35 @@ class UnifiedClaudeScheduler {
         throw new Error(`No available accounts in group ${group.name}`)
       }
 
+      // 应用消息摘要验证过滤（如果有会话上下文）
+      let filteredAccounts = availableAccounts
+      if (sessionContext && sessionHash && sessionContext.requestBody?.messages) {
+        filteredAccounts = []
+        for (const account of availableAccounts) {
+          const validationResult = await this._validateExclusiveAccountDigest(
+            account,
+            sessionHash,
+            sessionContext.requestBody.messages
+          )
+
+          if (validationResult.valid) {
+            filteredAccounts.push(account)
+          } else {
+            logger.debug(
+              `🛑 Skipping group member ${account.name || account.accountId} due to digest validation failure`
+            )
+          }
+        }
+
+        if (filteredAccounts.length === 0) {
+          throw new Error(
+            `No accounts in group ${group.name} passed digest validation. All exclusive accounts failed validation.`
+          )
+        }
+      }
+
       // 使用现有的优先级排序逻辑
-      const sortedAccounts = this._sortAccountsByPriority(availableAccounts)
+      const sortedAccounts = this._sortAccountsByPriority(filteredAccounts)
 
       // 选择第一个账户
       const selectedAccount = sortedAccounts[0]
@@ -1514,6 +1613,90 @@ class UnifiedClaudeScheduler {
     } catch (error) {
       logger.error('❌ Failed to get available CCR accounts:', error)
       return []
+    }
+  }
+
+  /**
+   * 验证独占账户的消息摘要（如果启用）
+   * @param {Object} account - 账户对象
+   * @param {string} sessionHash - 会话哈希
+   * @param {Array} messages - 请求中的消息数组
+   * @returns {Promise<{valid: boolean, shouldClearBinding?: boolean}>} - 验证结果
+   */
+  async _validateExclusiveAccountDigest(account, sessionHash, messages) {
+    const accountId = account.accountId || account.id
+    const isExclusive =
+      account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
+    const digestEnabled =
+      account.enableMessageDigest === true || account.enableMessageDigest === 'true'
+
+    // 非独占账户或未启用摘要验证，直接通过
+    if (!isExclusive || !digestEnabled) {
+      return { valid: true }
+    }
+
+    // 执行摘要验证
+    const digestValid = await this._validateSessionDigest(accountId, sessionHash, messages)
+
+    if (!digestValid) {
+      logger.warn(`🛑 Exclusive account ${account.name || accountId} digest validation failed`)
+      return { valid: false, shouldClearBinding: true }
+    }
+
+    logger.debug(`✅ Exclusive account ${account.name || accountId} digest validation passed`)
+    return { valid: true }
+  }
+
+  /**
+   * 验证会话消息摘要
+   * @param {string} accountId - 账户ID
+   * @param {string} sessionHash - 会话哈希
+   * @param {Array} messages - 请求中的消息数组
+   * @returns {boolean} - 是否通过验证
+   */
+  async _validateSessionDigest(accountId, sessionHash, messages) {
+    try {
+      const digestHelper = require('../utils/messageDigest')
+      const client = await redis.getClient()
+
+      // 1. 生成新摘要（只包含 user 消息）
+      const newDigest = digestHelper.generateDigest(messages)
+      logger.debug(
+        `📋 Generated new digest (length ${newDigest.length}): ${newDigest.substring(0, 50)}...`
+      )
+
+      // 2. 读取旧摘要
+      const digestKey = digestHelper.getDigestRedisKey(accountId, sessionHash)
+      const oldDigest = await client.get(digestKey)
+
+      if (oldDigest) {
+        logger.debug(
+          `📋 Retrieved old digest (length ${oldDigest.length}): ${oldDigest.substring(0, 50)}...`
+        )
+      } else {
+        logger.debug('📋 No existing digest found (first request)')
+      }
+
+      // 3. 验证
+      const validation = digestHelper.validateDigestUpdate(oldDigest, newDigest)
+
+      if (!validation.valid) {
+        logger.warn(`📋 Digest validation FAILED: ${validation.reason}`)
+        return false
+      }
+
+      logger.info(`📋 Digest validation PASSED: ${validation.action}`)
+
+      // 4. 更新摘要
+      const ttl = 7 * 24 * 3600 // 7天
+      await client.setex(digestKey, ttl, newDigest)
+      logger.debug(`📋 Updated digest in Redis (TTL: 7 days)`)
+
+      return true
+    } catch (error) {
+      logger.error('❌ Error validating session digest:', error)
+      // 验证过程出错时，保守处理：允许请求通过
+      return true
     }
   }
 }
