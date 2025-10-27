@@ -10,6 +10,11 @@ const { authenticateApiKey } = require('../middleware/auth')
 const logger = require('../utils/logger')
 const { getEffectiveModel, parseVendorPrefixedModel } = require('../utils/modelHelper')
 const sessionHelper = require('../utils/sessionHelper')
+const {
+  buildSessionContext,
+  registerSessionForAccount,
+  refreshSessionRetention
+} = require('../utils/claudeSessionCoordinator')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
 const router = express.Router()
@@ -121,18 +126,22 @@ async function handleMessagesRequest(req, res) {
 
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
+      const sessionContext = await buildSessionContext(sessionHash, req.body)
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
       let accountId
       let accountType
+      let selection
       try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+        selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
-          requestedModel
+          requestedModel,
+          { sessionContext }
         )
         ;({ accountId, accountType } = selection)
+        await registerSessionForAccount(selection, sessionContext)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
@@ -235,8 +244,16 @@ async function handleMessagesRequest(req, res) {
                 JSON.stringify(usageData)
               )
             }
+          },
+          null,
+          {
+            sessionContext,
+            preselectedAccount: selection,
+            clientRequest: req,
+            clientResponse: res
           }
         )
+        await refreshSessionRetention(selection, sessionContext)
       } else if (accountType === 'claude-console') {
         // Claude Console账号使用Console转发服务（需要传递accountId）
         await claudeConsoleRelayService.relayStreamRequestWithUsageCapture(
@@ -327,8 +344,14 @@ async function handleMessagesRequest(req, res) {
               )
             }
           },
-          accountId
+          accountId,
+          null,
+          {
+            clientRequest: req,
+            clientResponse: res
+          }
         )
+        await refreshSessionRetention(selection, sessionContext)
       } else if (accountType === 'bedrock') {
         // Bedrock账号使用Bedrock转发服务
         try {
@@ -483,18 +506,22 @@ async function handleMessagesRequest(req, res) {
 
       // 生成会话哈希用于sticky会话
       const sessionHash = sessionHelper.generateSessionHash(req.body)
+      const sessionContext = await buildSessionContext(sessionHash, req.body)
 
       // 使用统一调度选择账号（传递请求的模型）
       const requestedModel = req.body.model
       let accountId
       let accountType
+      let selection
       try {
-        const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
+        selection = await unifiedClaudeScheduler.selectAccountForApiKey(
           req.apiKey,
           sessionHash,
-          requestedModel
+          requestedModel,
+          { sessionContext }
         )
         ;({ accountId, accountType } = selection)
+        await registerSessionForAccount(selection, sessionContext)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = claudeRelayService._buildStandardRateLimitMessage(
@@ -521,7 +548,11 @@ async function handleMessagesRequest(req, res) {
           req.apiKey,
           req,
           res,
-          req.headers
+          req.headers,
+          {
+            sessionContext,
+            preselectedAccount: selection
+          }
         )
       } else if (accountType === 'claude-console') {
         // Claude Console账号使用Console转发服务
@@ -585,6 +616,8 @@ async function handleMessagesRequest(req, res) {
           accountId
         )
       }
+
+      await refreshSessionRetention(selection, sessionContext)
 
       logger.info('📡 Claude API response received', {
         statusCode: response.statusCode,
@@ -880,13 +913,27 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
     // 生成会话哈希用于sticky会话
     const sessionHash = sessionHelper.generateSessionHash(req.body)
 
+    let sessionContext
+    try {
+      sessionContext = await buildSessionContext(sessionHash, req.body)
+    } catch (error) {
+      logger.warn(`⚠️ Session validation failed: ${error.message}`)
+      return res.status(422).json({
+        error: error.code || 'SESSION_VALIDATION_FAILED',
+        message: error.message
+      })
+    }
+
     // 选择可用的Claude账户
     const requestedModel = req.body.model
-    const { accountId, accountType } = await unifiedClaudeScheduler.selectAccountForApiKey(
+    const selection = await unifiedClaudeScheduler.selectAccountForApiKey(
       req.apiKey,
       sessionHash,
-      requestedModel
+      requestedModel,
+      { sessionContext }
     )
+    const { accountId, accountType } = selection
+    await registerSessionForAccount(selection, sessionContext)
 
     let response
     if (accountType === 'claude-official') {
@@ -933,6 +980,8 @@ router.post('/v1/messages/count_tokens', authenticateApiKey, async (req, res) =>
         }
       })
     }
+
+    await refreshSessionRetention(selection, sessionContext)
 
     // 直接返回响应，不记录token使用量
     res.status(response.statusCode)

@@ -314,13 +314,22 @@ const removeModelMapping = (index) => {
 }
 
 const validate = () => {
-  const e = {}
-  if (!form.value.name || form.value.name.trim().length === 0) e.name = '名称不能为空'
-  if (!form.value.apiUrl || form.value.apiUrl.trim().length === 0) e.apiUrl = 'API URL 不能为空'
-  if (!isEdit.value && (!form.value.apiKey || form.value.apiKey.trim().length === 0))
+  const e = {
+    name: '',
+    apiUrl: '',
+    apiKey: ''
+  }
+  if (!form.value.name || form.value.name.trim().length === 0) {
+    e.name = '名称不能为空'
+  }
+  if (!form.value.apiUrl || form.value.apiUrl.trim().length === 0) {
+    e.apiUrl = 'API URL 不能为空'
+  }
+  if (!isEdit.value && (!form.value.apiKey || form.value.apiKey.trim().length === 0)) {
     e.apiKey = 'API Key 不能为空'
+  }
   errors.value = e
-  return Object.keys(e).length === 0
+  return Object.values(e).every((val) => !val)
 }
 
 const submit = async () => {

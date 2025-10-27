@@ -234,6 +234,10 @@ class CcrAccountService {
       `[DEBUG] Final CCR account data - name: ${accountData.name}, hasApiUrl: ${!!accountData.apiUrl}, hasApiKey: ${!!accountData.apiKey}, supportedModels: ${JSON.stringify(accountData.supportedModels)}`
     )
 
+    // 清理历史残留字段（CCR不支持会话独占功能）
+    delete accountData.exclusiveSessionOnly
+    delete accountData.sessionRetentionSeconds
+
     return accountData
   }
 

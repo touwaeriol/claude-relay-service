@@ -2,6 +2,7 @@ const axios = require('axios')
 const claudeConsoleAccountService = require('./claudeConsoleAccountService')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
+const concurrencyManager = require('./concurrencyManager')
 const {
   sanitizeUpstreamError,
   sanitizeErrorMessage,
@@ -31,6 +32,77 @@ class ClaudeConsoleRelayService {
       account = await claudeConsoleAccountService.getAccount(accountId)
       if (!account) {
         throw new Error('Claude Console Claude account not found')
+      }
+
+      // 🔒 并发控制：针对 claude-console 账户（非流式请求）
+      if (account?.concurrencyControl && clientRequest && clientResponse) {
+        try {
+          const concurrencyConfig = JSON.parse(account.concurrencyControl)
+          if (concurrencyConfig.enabled) {
+            logger.debug(
+              `🔒 [Console NonStream] Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ [Console NonStream] Acquired concurrency slot for ${accountId}`)
+          }
+        } catch (error) {
+          if (error.code === 'QUEUE_FULL') {
+            logger.warn(
+              `🚫 [Console NonStream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+            )
+            return {
+              statusCode: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+              body: JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: error.message,
+                details: {
+                  currentWaiting: error.currentWaiting,
+                  maxQueueSize: error.maxQueueSize
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(
+              `⏱️ [Console NonStream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+            )
+            return {
+              statusCode: 503,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': Math.ceil(error.timeout / 2).toString()
+              },
+              body: JSON.stringify({
+                error: 'concurrency_timeout',
+                message: error.message,
+                details: {
+                  timeout: error.timeout
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(
+              `🔌 [Console NonStream] Client disconnected while waiting for concurrency slot: ${accountId}`
+            )
+            return {
+              statusCode: 499,
+              headers: {},
+              body: '',
+              accountId,
+              skipResponse: true
+            }
+          }
+          // 其他错误继续抛出
+          throw error
+        }
       }
 
       logger.info(
@@ -317,6 +389,77 @@ class ClaudeConsoleRelayService {
       account = await claudeConsoleAccountService.getAccount(accountId)
       if (!account) {
         throw new Error('Claude Console Claude account not found')
+      }
+
+      // 🔒 并发控制：针对 claude-console 账户
+      // 从 options 获取 req/res 对象，如果没有则使用 responseStream 作为 fallback
+      const { clientRequest } = options
+      const clientResponse = options.clientResponse || responseStream
+
+      if (account?.concurrencyControl && clientRequest && clientResponse) {
+        try {
+          const concurrencyConfig = JSON.parse(account.concurrencyControl)
+          if (concurrencyConfig.enabled) {
+            logger.debug(
+              `🔒 [Console Stream] Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ [Console Stream] Acquired concurrency slot for ${accountId}`)
+          }
+        } catch (error) {
+          if (error.code === 'QUEUE_FULL') {
+            logger.warn(
+              `🚫 [Console Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+            )
+            // 流式响应：设置状态码和发送错误事件
+            responseStream.writeHead(429, {
+              'Content-Type': 'text/event-stream',
+              'Retry-After': '10'
+            })
+            responseStream.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: error.message
+              })}\n\n`
+            )
+            responseStream.end()
+            return
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(
+              `⏱️ [Console Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+            )
+            responseStream.writeHead(503, {
+              'Content-Type': 'text/event-stream',
+              'Retry-After': Math.ceil(error.timeout / 2).toString()
+            })
+            responseStream.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: 'concurrency_timeout',
+                message: error.message
+              })}\n\n`
+            )
+            responseStream.end()
+            return
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(
+              `🔌 [Console Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
+            )
+            // 客户端已断开，直接结束流
+            if (!responseStream.headersSent) {
+              responseStream.writeHead(499, {})
+            }
+            responseStream.end()
+            return
+          }
+          // 其他错误继续抛出
+          throw error
+        }
       }
 
       logger.info(

@@ -34,8 +34,8 @@ const config = {
 
   // 🔗 会话管理配置
   session: {
-    // 粘性会话TTL配置（小时），默认1小时
-    stickyTtlHours: parseFloat(process.env.STICKY_SESSION_TTL_HOURS) || 1,
+    // 粘性会话TTL配置（小时），默认7天（168小时）
+    stickyTtlHours: parseFloat(process.env.STICKY_SESSION_TTL_HOURS) || 168,
     // 续期阈值（分钟），默认0分钟（不续期）
     renewalThresholdMinutes: parseInt(process.env.STICKY_SESSION_RENEWAL_THRESHOLD_MINUTES) || 0
   },

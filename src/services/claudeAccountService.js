@@ -75,13 +75,18 @@ class ClaudeAccountService {
       useUnifiedClientId = false, // 是否使用统一的客户端标识
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
-      extInfo = null // 额外扩展信息
+      exclusiveSessionOnly = false, // 是否只允许处理自身会话
+      extInfo = null, // 额外扩展信息
+      // 并发控制配置（对象）
+      concurrencyControl = null // { enabled, maxConcurrency, queueSize, queueTimeout }
     } = options
 
     const accountId = uuidv4()
 
     let accountData
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
+
+    const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -120,7 +125,17 @@ class ClaudeAccountService {
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        exclusiveSessionOnly: exclusiveEnabled.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: concurrencyControl
+          ? JSON.stringify({
+              enabled: concurrencyControl.enabled === true,
+              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
+              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
+              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
+            })
+          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
       }
     } else {
       // 兼容旧格式
@@ -147,12 +162,24 @@ class ClaudeAccountService {
         schedulable: schedulable.toString(), // 是否可被调度
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
+        useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
+        unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 手动设置的订阅信息
         subscriptionInfo: subscriptionInfo ? JSON.stringify(subscriptionInfo) : '',
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        exclusiveSessionOnly: exclusiveEnabled.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: concurrencyControl
+          ? JSON.stringify({
+              enabled: concurrencyControl.enabled === true,
+              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
+              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
+              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
+            })
+          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
       }
     }
 
@@ -200,6 +227,7 @@ class ClaudeAccountService {
       useUnifiedUserAgent,
       useUnifiedClientId,
       unifiedClientId,
+      exclusiveSessionOnly: exclusiveEnabled,
       extInfo: normalizedExtInfo
     }
   }
@@ -558,7 +586,9 @@ class ClaudeAccountService {
             // 添加停止原因
             stoppedReason: account.stoppedReason || null,
             // 扩展信息
-            extInfo: parsedExtInfo
+            extInfo: parsedExtInfo,
+            exclusiveSessionOnly:
+              account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true
           }
         })
       )
@@ -650,11 +680,18 @@ class ClaudeAccountService {
         'useUnifiedClientId',
         'unifiedClientId',
         'subscriptionExpiresAt',
-        'extInfo'
+        'extInfo',
+        'exclusiveSessionOnly',
+        // 并发控制配置（对象）
+        'concurrencyControl'
       ]
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
       let extInfoProvided = false
+      let exclusiveFlag =
+        accountData.exclusiveSessionOnly === undefined
+          ? false
+          : accountData.exclusiveSessionOnly === 'true' || accountData.exclusiveSessionOnly === true
 
       // 检查是否新增了 refresh token
       const oldRefreshToken = this._decryptSensitiveData(accountData.refreshToken)
@@ -696,13 +733,34 @@ class ClaudeAccountService {
                 }
               }
             }
+          } else if (field === 'exclusiveSessionOnly') {
+            exclusiveFlag = value === true || value === 'true'
+            updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+          } else if (field === 'concurrencyControl') {
+            // 处理并发控制配置
+            updatedData[field] = value
+              ? JSON.stringify({
+                  enabled: value.enabled === true,
+                  maxConcurrency: parseInt(value.maxConcurrency, 10) || 10,
+                  queueSize: parseInt(value.queueSize, 10) || 20,
+                  queueTimeout: parseInt(value.queueTimeout, 10) || 120
+                })
+              : JSON.stringify({
+                  enabled: false,
+                  maxConcurrency: 10,
+                  queueSize: 20,
+                  queueTimeout: 120
+                })
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }
         }
       }
 
-      // 如果新增了 refresh token（之前没有，现在有了），更新过期时间为10分钟
+      // 设置 exclusiveSessionOnly 标志
+      updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+
+      // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (updates.refreshToken && !oldRefreshToken && updates.refreshToken.trim()) {
         const newExpiresAt = Date.now() + 10 * 60 * 1000 // 10分钟
         updatedData.expiresAt = newExpiresAt.toString()
