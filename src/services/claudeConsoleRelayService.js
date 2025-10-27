@@ -34,6 +34,77 @@ class ClaudeConsoleRelayService {
         throw new Error('Claude Console Claude account not found')
       }
 
+      // 🔒 并发控制：针对 claude-console 账户（非流式请求）
+      if (account?.concurrencyControl && clientRequest && clientResponse) {
+        try {
+          const concurrencyConfig = JSON.parse(account.concurrencyControl)
+          if (concurrencyConfig.enabled) {
+            logger.debug(
+              `🔒 [Console NonStream] Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ [Console NonStream] Acquired concurrency slot for ${accountId}`)
+          }
+        } catch (error) {
+          if (error.code === 'QUEUE_FULL') {
+            logger.warn(
+              `🚫 [Console NonStream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+            )
+            return {
+              statusCode: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+              body: JSON.stringify({
+                error: 'concurrency_limit_exceeded',
+                message: error.message,
+                details: {
+                  currentWaiting: error.currentWaiting,
+                  maxQueueSize: error.maxQueueSize
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(
+              `⏱️ [Console NonStream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+            )
+            return {
+              statusCode: 503,
+              headers: {
+                'Content-Type': 'application/json',
+                'Retry-After': Math.ceil(error.timeout / 2).toString()
+              },
+              body: JSON.stringify({
+                error: 'concurrency_timeout',
+                message: error.message,
+                details: {
+                  timeout: error.timeout
+                }
+              }),
+              accountId
+            }
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(
+              `🔌 [Console NonStream] Client disconnected while waiting for concurrency slot: ${accountId}`
+            )
+            return {
+              statusCode: 499,
+              headers: {},
+              body: '',
+              accountId,
+              skipResponse: true
+            }
+          }
+          // 其他错误继续抛出
+          throw error
+        }
+      }
+
       logger.info(
         `📤 Processing Claude Console API request for key: ${apiKeyData.name || apiKeyData.id}, account: ${account.name} (${accountId})`
       )
