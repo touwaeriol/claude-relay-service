@@ -1070,68 +1070,67 @@
 
             <!-- 并发控制配置 (仅 Claude Code/Console 账户) -->
             <div v-if="form.platform === 'claude' || form.platform === 'claude-console'">
+              <div>
+                <label class="inline-flex cursor-pointer items-center">
+                  <input
+                    v-model="form.enableConcurrencyControl"
+                    class="mr-2 rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
+                    type="checkbox"
+                  />
+                  <span class="text-sm text-gray-700 dark:text-gray-300">启用并发控制</span>
+                </label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  启用后，限制该账户的最大并发请求数和队列长度
+                </p>
+              </div>
+
+              <div v-if="form.enableConcurrencyControl" class="mt-4 space-y-4">
                 <div>
-                  <label class="inline-flex cursor-pointer items-center">
-                    <input
-                      v-model="form.enableConcurrencyControl"
-                      class="mr-2 rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
-                      type="checkbox"
-                    />
-                    <span class="text-sm text-gray-700 dark:text-gray-300">启用并发控制</span>
-                  </label>
+                  <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    >最大并发数</label
+                  >
+                  <input
+                    v-model.number="form.maxConcurrency"
+                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                    min="1"
+                    placeholder="默认10"
+                    type="number"
+                  />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    启用后，限制该账户的最大并发请求数和队列长度
+                    该账户同时处理的最大请求数
                   </p>
                 </div>
 
-                <div v-if="form.enableConcurrencyControl" class="mt-4 space-y-4">
-                  <div>
-                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                      >最大并发数</label
-                    >
-                    <input
-                      v-model.number="form.maxConcurrency"
-                      class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      min="1"
-                      placeholder="默认10"
-                      type="number"
-                    />
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      该账户同时处理的最大请求数
-                    </p>
-                  </div>
+                <div>
+                  <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    >队列长度</label
+                  >
+                  <input
+                    v-model.number="form.queueSize"
+                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                    min="0"
+                    placeholder="默认20"
+                    type="number"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    等待队列的最大长度，超过后返回 429 错误
+                  </p>
+                </div>
 
-                  <div>
-                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                      >队列长度</label
-                    >
-                    <input
-                      v-model.number="form.queueSize"
-                      class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      min="0"
-                      placeholder="默认20"
-                      type="number"
-                    />
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      等待队列的最大长度，超过后返回 429 错误
-                    </p>
-                  </div>
-
-                  <div>
-                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-                      >等待超时 (秒)</label
-                    >
-                    <input
-                      v-model.number="form.queueTimeout"
-                      class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      min="1"
-                      placeholder="默认120秒，必须大于0"
-                      type="number"
-                    />
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      请求在队列中等待的最大时间（秒），需要大于 0，超过后返回 503
-                    </p>
-                  </div>
+                <div>
+                  <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    >等待超时 (秒)</label
+                  >
+                  <input
+                    v-model.number="form.queueTimeout"
+                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
+                    min="1"
+                    placeholder="默认120秒，必须大于0"
+                    type="number"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    请求在队列中等待的最大时间（秒），需要大于 0，超过后返回 503
+                  </p>
                 </div>
               </div>
             </div>
