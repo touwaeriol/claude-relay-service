@@ -6,6 +6,7 @@ const logger = require('../utils/logger')
 const redis = require('../models/redis')
 // const { RateLimiterRedis } = require('rate-limiter-flexible') // 暂时未使用
 const ClientValidator = require('../validators/clientValidator')
+const concurrencyManager = require('../services/concurrencyManager')
 
 const FALLBACK_CONCURRENCY_CONFIG = {
   leaseSeconds: 300,
@@ -201,142 +202,74 @@ const authenticateApiKey = async (req, res, next) => {
       )
     }
 
-    // 检查并发限制
-    const concurrencyLimit = validation.keyData.concurrencyLimit || 0
-    if (!skipKeyRestrictions && concurrencyLimit > 0) {
-      const { leaseSeconds: configLeaseSeconds, renewIntervalSeconds: configRenewIntervalSeconds } =
-        resolveConcurrencyConfig()
-      const leaseSeconds = Math.max(Number(configLeaseSeconds) || 300, 30)
-      let renewIntervalSeconds = configRenewIntervalSeconds
-      if (renewIntervalSeconds > 0) {
-        const maxSafeRenew = Math.max(leaseSeconds - 5, 15)
-        renewIntervalSeconds = Math.min(Math.max(renewIntervalSeconds, 15), maxSafeRenew)
-      } else {
-        renewIntervalSeconds = 0
-      }
-      const requestId = uuidv4()
+    // 🔧 检查并发限制（使用 ConcurrencyManager）
+    const concurrencyConfig = validation.keyData.concurrencyConfig || {
+      enabled: false,
+      maxConcurrency: 1,
+      queueSize: 0,
+      queueTimeout: 60
+    }
 
-      const currentConcurrency = await redis.incrConcurrency(
-        validation.keyData.id,
-        requestId,
-        leaseSeconds
-      )
-      logger.api(
-        `📈 Incremented concurrency for key: ${validation.keyData.id} (${validation.keyData.name}), current: ${currentConcurrency}, limit: ${concurrencyLimit}`
-      )
+    if (!skipKeyRestrictions && concurrencyConfig.enabled) {
+      const resourceId = `apikey:${validation.keyData.id}`
 
-      if (currentConcurrency > concurrencyLimit) {
-        // 如果超过限制，立即减少计数
-        await redis.decrConcurrency(validation.keyData.id, requestId)
-        logger.security(
-          `🚦 Concurrency limit exceeded for key: ${validation.keyData.id} (${
-            validation.keyData.name
-          }), current: ${currentConcurrency - 1}, limit: ${concurrencyLimit}`
+      try {
+        const release = await concurrencyManager.waitForSlot(
+          resourceId,
+          concurrencyConfig,
+          req,
+          res
         )
-        return res.status(429).json({
-          error: 'Concurrency limit exceeded',
-          message: `Too many concurrent requests. Limit: ${concurrencyLimit} concurrent requests`,
-          currentConcurrency: currentConcurrency - 1,
-          concurrencyLimit
-        })
-      }
 
-      const renewIntervalMs =
-        renewIntervalSeconds > 0 ? Math.max(renewIntervalSeconds * 1000, 15000) : 0
-
-      // 使用标志位确保只减少一次
-      let concurrencyDecremented = false
-      let leaseRenewInterval = null
-
-      if (renewIntervalMs > 0) {
-        leaseRenewInterval = setInterval(() => {
-          redis
-            .refreshConcurrencyLease(validation.keyData.id, requestId, leaseSeconds)
-            .catch((error) => {
-              logger.error(
-                `Failed to refresh concurrency lease for key ${validation.keyData.id}:`,
-                error
-              )
-            })
-        }, renewIntervalMs)
-
-        if (typeof leaseRenewInterval.unref === 'function') {
-          leaseRenewInterval.unref()
+        // 存储 release 函数到请求对象（虽然自动释放，但保留以防需要手动释放）
+        req.concurrencyInfo = {
+          apiKeyId: validation.keyData.id,
+          apiKeyName: validation.keyData.name,
+          resourceId,
+          release
         }
-      }
 
-      const decrementConcurrency = async () => {
-        if (!concurrencyDecremented) {
-          concurrencyDecremented = true
-          if (leaseRenewInterval) {
-            clearInterval(leaseRenewInterval)
-            leaseRenewInterval = null
-          }
-          try {
-            const newCount = await redis.decrConcurrency(validation.keyData.id, requestId)
-            logger.api(
-              `📉 Decremented concurrency for key: ${validation.keyData.id} (${validation.keyData.name}), new count: ${newCount}`
-            )
-          } catch (error) {
-            logger.error(`Failed to decrement concurrency for key ${validation.keyData.id}:`, error)
-          }
+        logger.api(
+          `✅ Concurrency slot acquired for key: ${validation.keyData.id} (${validation.keyData.name})`
+        )
+      } catch (error) {
+        // 处理并发控制错误
+        if (error.code === 'QUEUE_FULL') {
+          logger.security(
+            `🚫 Queue full for key: ${validation.keyData.id} (${validation.keyData.name}), waiting: ${error.currentWaiting}, max: ${error.maxQueueSize}`
+          )
+          return res.status(429).json({
+            error: 'Concurrency limit exceeded',
+            message: `Queue is full. ${error.currentWaiting} requests waiting, maximum queue size is ${error.maxQueueSize}`,
+            currentWaiting: error.currentWaiting,
+            maxQueueSize: error.maxQueueSize,
+            maxConcurrency: concurrencyConfig.maxConcurrency
+          })
+        } else if (error.code === 'TIMEOUT') {
+          logger.warn(
+            `⏱️ Concurrency timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
+          )
+          return res.status(503).json({
+            error: 'Request timeout',
+            message: `Request timed out waiting for available concurrency slot after ${error.timeout}s`,
+            timeout: error.timeout,
+            maxConcurrency: concurrencyConfig.maxConcurrency,
+            queueSize: concurrencyConfig.queueSize
+          })
+        } else if (error.code === 'CLIENT_DISCONNECTED') {
+          logger.info(
+            `🔌 Client disconnected for key: ${validation.keyData.id} (${validation.keyData.name})`
+          )
+          // 客户端断开连接，无需返回响应
+          return
+        } else {
+          // 其他未知错误
+          logger.error(`❌ Concurrency control error for key ${validation.keyData.id}:`, error)
+          return res.status(500).json({
+            error: 'Concurrency control error',
+            message: 'Failed to acquire concurrency slot'
+          })
         }
-      }
-
-      // 监听最可靠的事件（避免重复监听）
-      // res.on('close') 是最可靠的，会在连接关闭时触发
-      res.once('close', () => {
-        logger.api(
-          `🔌 Response closed for key: ${validation.keyData.id} (${validation.keyData.name})`
-        )
-        decrementConcurrency()
-      })
-
-      // req.on('close') 作为备用，处理请求端断开
-      req.once('close', () => {
-        logger.api(
-          `🔌 Request closed for key: ${validation.keyData.id} (${validation.keyData.name})`
-        )
-        decrementConcurrency()
-      })
-
-      req.once('aborted', () => {
-        logger.warn(
-          `⚠️ Request aborted for key: ${validation.keyData.id} (${validation.keyData.name})`
-        )
-        decrementConcurrency()
-      })
-
-      req.once('error', (error) => {
-        logger.error(
-          `❌ Request error for key ${validation.keyData.id} (${validation.keyData.name}):`,
-          error
-        )
-        decrementConcurrency()
-      })
-
-      res.once('error', (error) => {
-        logger.error(
-          `❌ Response error for key ${validation.keyData.id} (${validation.keyData.name}):`,
-          error
-        )
-        decrementConcurrency()
-      })
-
-      // res.on('finish') 处理正常完成的情况
-      res.once('finish', () => {
-        logger.api(
-          `✅ Response finished for key: ${validation.keyData.id} (${validation.keyData.name})`
-        )
-        decrementConcurrency()
-      })
-
-      // 存储并发信息到请求对象，便于后续处理
-      req.concurrencyInfo = {
-        apiKeyId: validation.keyData.id,
-        apiKeyName: validation.keyData.name,
-        requestId,
-        decrementConcurrency
       }
     }
 
@@ -582,7 +515,7 @@ const authenticateApiKey = async (req, res, next) => {
       bedrockAccountId: validation.keyData.bedrockAccountId, // 添加 Bedrock 账号ID
       droidAccountId: validation.keyData.droidAccountId,
       permissions: validation.keyData.permissions,
-      concurrencyLimit: validation.keyData.concurrencyLimit,
+      concurrencyConfig: validation.keyData.concurrencyConfig,
       rateLimitWindow: validation.keyData.rateLimitWindow,
       rateLimitRequests: validation.keyData.rateLimitRequests,
       rateLimitCost: validation.keyData.rateLimitCost, // 新增：费用限制

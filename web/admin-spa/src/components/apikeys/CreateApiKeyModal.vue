@@ -433,21 +433,17 @@
             </div>
           </div>
 
-          <div>
-            <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >并发限制 (可选)</label
-            >
-            <input
-              v-model="form.concurrencyLimit"
-              class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-              min="0"
-              placeholder="0 表示无限制"
-              type="number"
-            />
-            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              设置此 API Key 可同时处理的最大请求数，0 或留空表示无限制
-            </p>
-          </div>
+          <!-- 并发控制配置 -->
+          <ConcurrencyConfigCard
+            v-model="form.concurrencyConfig"
+            description="限制此 API Key 的最大并发请求数，超出时可选择排队等待或立即拒绝"
+            :placeholders="{
+              maxConcurrency: '1',
+              queueSize: '0',
+              queueTimeout: '60'
+            }"
+            title="启用并发控制"
+          />
 
           <div>
             <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
@@ -894,6 +890,7 @@ import { useClientsStore } from '@/stores/clients'
 import { useApiKeysStore } from '@/stores/apiKeys'
 import { apiClient } from '@/config/api'
 import AccountSelector from '@/components/common/AccountSelector.vue'
+import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
 
 const props = defineProps({
   accounts: {
@@ -956,7 +953,12 @@ const form = reactive({
   rateLimitWindow: '',
   rateLimitRequests: '',
   rateLimitCost: '', // 新增：费用限制
-  concurrencyLimit: '',
+  concurrencyConfig: {
+    enabled: false,
+    maxConcurrency: 1,
+    queueSize: 0,
+    queueTimeout: 60
+  },
   dailyCostLimit: '',
   totalCostLimit: '',
   weeklyOpusCostLimit: '',
@@ -1341,10 +1343,7 @@ const createApiKey = async () => {
         form.rateLimitCost !== '' && form.rateLimitCost !== null
           ? parseFloat(form.rateLimitCost)
           : null,
-      concurrencyLimit:
-        form.concurrencyLimit !== '' && form.concurrencyLimit !== null
-          ? parseInt(form.concurrencyLimit)
-          : 0,
+      concurrencyConfig: form.concurrencyConfig,
       dailyCostLimit:
         form.dailyCostLimit !== '' && form.dailyCostLimit !== null
           ? parseFloat(form.dailyCostLimit)

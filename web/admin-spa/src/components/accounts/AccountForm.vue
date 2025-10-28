@@ -1661,68 +1661,16 @@
               </div>
 
               <!-- 并发控制配置 (仅 Claude Code/Console 账户) -->
-              <div>
-                <label class="inline-flex cursor-pointer items-center">
-                  <input
-                    v-model="form.enableConcurrencyControl"
-                    class="mr-2 rounded border-gray-300 text-blue-600 focus:border-blue-500 focus:ring focus:ring-blue-200 dark:border-gray-600 dark:bg-gray-700"
-                    type="checkbox"
-                  />
-                  <span class="text-sm text-gray-700 dark:text-gray-300">启用并发控制</span>
-                </label>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  启用后，限制该账户的最大并发请求数和队列长度
-                </p>
-              </div>
-
-              <div
-                v-if="form.enableConcurrencyControl"
-                class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3"
-              >
-                <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >最大并发数</label
-                  >
-                  <input
-                    v-model.number="form.maxConcurrency"
-                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                    min="1"
-                    placeholder="默认10"
-                    type="number"
-                  />
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">同时处理的最大请求数</p>
-                </div>
-
-                <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >队列长度</label
-                  >
-                  <input
-                    v-model.number="form.queueSize"
-                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                    min="0"
-                    placeholder="默认20"
-                    type="number"
-                  />
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">超过后返回 429 错误</p>
-                </div>
-
-                <div>
-                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >等待超时 (秒)</label
-                  >
-                  <input
-                    v-model.number="form.queueTimeout"
-                    class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                    min="1"
-                    placeholder="默认120"
-                    type="number"
-                  />
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    必须大于0，超时返回 503
-                  </p>
-                </div>
-              </div>
+              <ConcurrencyConfigCard
+                v-model="concurrencyConfig"
+                description="启用后，限制该账户的最大并发请求数和队列长度"
+                :placeholders="{
+                  maxConcurrency: '默认10',
+                  queueSize: '默认20',
+                  queueTimeout: '默认120'
+                }"
+                title="启用并发控制"
+              />
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -3459,6 +3407,7 @@ import OAuthFlow from './OAuthFlow.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
+import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
 
 const props = defineProps({
   account: {
@@ -3787,6 +3736,22 @@ const form = ref({
     return ''
   })(),
   expiresAt: props.account?.expiresAt || null
+})
+
+// 并发配置计算属性（用于 ConcurrencyConfigCard 组件）
+const concurrencyConfig = computed({
+  get: () => ({
+    enabled: form.value.enableConcurrencyControl,
+    maxConcurrency: form.value.maxConcurrency,
+    queueSize: form.value.queueSize,
+    queueTimeout: form.value.queueTimeout
+  }),
+  set: (value) => {
+    form.value.enableConcurrencyControl = value.enabled
+    form.value.maxConcurrency = value.maxConcurrency
+    form.value.queueSize = value.queueSize
+    form.value.queueTimeout = value.queueTimeout
+  }
 })
 
 // 模型限制配置

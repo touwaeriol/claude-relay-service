@@ -82,7 +82,7 @@ class ApiKeyService {
       droidAccountId = null,
       permissions = 'all', // 可选值：'claude'、'gemini'、'openai'、'droid' 或 'all'
       isActive = true,
-      concurrencyLimit = 0,
+      concurrencyConfig = null, // 新增：并发控制配置对象 {enabled, maxConcurrency, queueSize, queueTimeout}
       rateLimitWindow = null,
       rateLimitRequests = null,
       rateLimitCost = null, // 新增：速率限制费用字段
@@ -111,7 +111,9 @@ class ApiKeyService {
       description,
       apiKey: hashedKey,
       tokenLimit: String(tokenLimit ?? 0),
-      concurrencyLimit: String(concurrencyLimit ?? 0),
+      concurrencyConfig: JSON.stringify(
+        concurrencyConfig || { enabled: false, maxConcurrency: 1, queueSize: 0, queueTimeout: 60 }
+      ), // 并发控制配置（JSON字符串）
       rateLimitWindow: String(rateLimitWindow ?? 0),
       rateLimitRequests: String(rateLimitRequests ?? 0),
       rateLimitCost: String(rateLimitCost ?? 0), // 新增：速率限制费用字段
@@ -157,7 +159,10 @@ class ApiKeyService {
       name: keyData.name,
       description: keyData.description,
       tokenLimit: parseInt(keyData.tokenLimit),
-      concurrencyLimit: parseInt(keyData.concurrencyLimit),
+      concurrencyConfig: JSON.parse(
+        keyData.concurrencyConfig ||
+          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+      ),
       rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
       rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
       rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -319,7 +324,10 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
+          concurrencyConfig: JSON.parse(
+            keyData.concurrencyConfig ||
+              '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+          ),
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -446,7 +454,10 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
+          concurrencyConfig: JSON.parse(
+            keyData.concurrencyConfig ||
+              '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+          ),
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0),
@@ -494,7 +505,19 @@ class ApiKeyService {
         }
         key.totalCost = costStats ? costStats.total : 0
         key.tokenLimit = parseInt(key.tokenLimit)
-        key.concurrencyLimit = parseInt(key.concurrencyLimit || 0)
+        try {
+          key.concurrencyConfig = JSON.parse(
+            key.concurrencyConfig ||
+              '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+          )
+        } catch (e) {
+          key.concurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 1,
+            queueSize: 0,
+            queueTimeout: 60
+          }
+        }
         key.rateLimitWindow = parseInt(key.rateLimitWindow || 0)
         key.rateLimitRequests = parseInt(key.rateLimitRequests || 0)
         key.rateLimitCost = parseFloat(key.rateLimitCost || 0) // 新增：速率限制费用字段
@@ -647,7 +670,7 @@ class ApiKeyService {
         'name',
         'description',
         'tokenLimit',
-        'concurrencyLimit',
+        'concurrencyConfig',
         'rateLimitWindow',
         'rateLimitRequests',
         'rateLimitCost', // 新增：速率限制费用字段
@@ -685,6 +708,11 @@ class ApiKeyService {
           if (field === 'restrictedModels' || field === 'allowedClients' || field === 'tags') {
             // 特殊处理数组字段
             updatedData[field] = JSON.stringify(value || [])
+          } else if (field === 'concurrencyConfig') {
+            // 特殊处理并发配置对象
+            updatedData[field] = JSON.stringify(
+              value || { enabled: false, maxConcurrency: 1, queueSize: 0, queueTimeout: 60 }
+            )
           } else if (
             field === 'enableModelRestriction' ||
             field === 'enableClientRestriction' ||
