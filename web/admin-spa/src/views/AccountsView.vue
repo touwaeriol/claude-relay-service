@@ -1126,8 +1126,7 @@
                           : ''
                       "
                       >等待</span
-                    >/
-                    <span class="text-green-600 dark:text-green-400">并发</span>/
+                    >/ <span class="text-green-600 dark:text-green-400">并发</span>/
                     <span
                       :class="
                         account.concurrency.currentRunning > 0
@@ -1622,7 +1621,9 @@
                   </div>
                 </div>
               </div>
-              <div class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400">
+              <div
+                class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
+              >
                 <div>
                   <span class="text-blue-600 dark:text-blue-400">队列</span>/
                   <span
