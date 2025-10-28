@@ -1,17 +1,18 @@
-const { Semaphore } = require('redis-semaphore')
+const Bottleneck = require('bottleneck')
+const NodeCache = require('node-cache')
 const logger = require('../utils/logger')
-const redisClient = require('../models/redis')
 
 /**
- * 并发控制管理器（基于 Redis）
- * 基于 redis-semaphore 实现的账户和 API Key 级别的并发控制
+ * 并发控制管理器（基于 Bottleneck + node-cache）
  *
  * 核心功能：
  * - 支持最大并发数限制
  * - 支持请求队列（队列满时立即拒绝）
  * - 支持等待超时
  * - 客户端断开自动释放信号量
- * - 基于 Redis 的分布式信号量（近似公平）
+ * - 基于 Redis 的分布式信号量
+ * - 动态更新并发配置（热更新）
+ * - 自动清理过期实例（30 分钟未访问）
  *
  * 使用示例：
  * ```javascript
@@ -31,9 +32,6 @@ const redisClient = require('../models/redis')
  *     // 队列已满，返回 429
  *   } else if (error.code === 'TIMEOUT') {
  *     // 等待超时，返回 503
- *   } else if (error.code === 'CLIENT_DISCONNECTED') {
- *     // 客户端已断开，直接返回（不需要响应）
- *     return;
  *   }
  * }
  * ```
@@ -41,37 +39,93 @@ const redisClient = require('../models/redis')
 class ConcurrencyManager {
   constructor() {
     /**
-     * 存储所有 Semaphore 实例
-     * Map<resourceId, { semaphore: Semaphore, configHash: string, createdAt: number }>
+     * Bottleneck 实例缓存（基于 node-cache）
+     * 自动特性：
+     * - 30 分钟未访问自动删除
+     * - 每次访问自动重置 TTL
+     * - 删除时自动断开 Bottleneck 连接
      */
-    this.semaphores = new Map()
+    this.limiters = new NodeCache({
+      stdTTL: 1800, // 30 分钟（秒）
+      checkperiod: 120, // 每 2 分钟检查过期
+      useClones: false, // 不克隆对象（性能优化）
+      deleteOnExpire: true // 过期时删除
+    })
 
     /**
-     * LRU 缓存限制（防止内存泄漏）
-     * 超过此限制时，删除最早创建的实例
+     * 监听删除事件（自动清理资源）
      */
-    this.maxInstances = 1000
+    this.limiters.on('del', (key, value) => {
+      this._disposeLimiter(key, value)
+    })
 
     /**
-     * 队列计数 TTL（秒）
-     * 1小时无活动后自动过期
-     * 注意：即使在 queueTimeout=0（永久等待）的场景下，也需要足够长的 TTL
-     * 避免所有请求阻塞等待时队列计数键过期
+     * Redis 客户端（懒加载）
      */
-    this.queueCountTTL = 3600 // 1小时
+    this.redis = null
+
+    /**
+     * 配置更新锁（防止并发更新竞态条件）
+     * 模式：Double-Checked Locking
+     * Map<resourceId, Promise>
+     */
+    this.updateLocks = new Map()
 
     /**
      * 统计信息
      */
     this.stats = {
       totalCreated: 0,
-      totalEvicted: 0,
+      totalDisposed: 0,
       totalAcquired: 0,
       totalReleased: 0,
       totalQueueFull: 0,
       totalTimeout: 0,
-      totalClientDisconnected: 0 // 客户端断开计数
+      totalConfigUpdates: 0,
+      totalConfigUpdateSkips: 0
     }
+  }
+
+  _normalizeConfig(config) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 1,
+      queueSize: 0,
+      queueTimeout: 1
+    }
+
+    if (!config || typeof config !== 'object') {
+      return { ...defaults }
+    }
+
+    const toNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const normalized = { ...defaults }
+
+    normalized.enabled =
+      config.enabled === true ||
+      config.enabled === 'true' ||
+      config.enabled === 1 ||
+      config.enabled === '1'
+
+    const coercedMaxConcurrency = Math.floor(
+      toNumber(config.maxConcurrency, defaults.maxConcurrency)
+    )
+    normalized.maxConcurrency = coercedMaxConcurrency < 1 ? 1 : coercedMaxConcurrency
+
+    const coercedQueueSize = Math.floor(toNumber(config.queueSize, defaults.queueSize))
+    normalized.queueSize = coercedQueueSize < 0 ? 0 : coercedQueueSize
+
+    const coercedQueueTimeout = Math.floor(toNumber(config.queueTimeout, defaults.queueTimeout))
+    normalized.queueTimeout = coercedQueueTimeout < 1 ? 1 : coercedQueueTimeout
+
+    return normalized
   }
 
   /**
@@ -80,11 +134,14 @@ class ConcurrencyManager {
    * @returns {object} Redis 客户端实例
    */
   _getRedisClient() {
-    const client = redisClient.getClient()
-    if (!client) {
-      throw new Error('Redis client is not connected')
+    if (!this.redis) {
+      const redisModel = require('../models/redis')
+      this.redis = redisModel.getClient()
+      if (!this.redis) {
+        throw new Error('Redis client is not connected')
+      }
     }
-    return client
+    return this.redis
   }
 
   /**
@@ -101,10 +158,10 @@ class ConcurrencyManager {
    * @returns {Promise<Function>} release 函数（用于手动释放，通常由事件监听器自动调用）
    * @throws {Error} code=QUEUE_FULL - 队列已满（立即拒绝）
    * @throws {Error} code=TIMEOUT - 等待超时
-   * @throws {Error} code=CLIENT_DISCONNECTED - 客户端在等待期间断开连接（立即释放槽位）
    */
   async waitForSlot(resourceId, config, req, res) {
-    const { enabled, maxConcurrency, queueSize, queueTimeout } = config
+    const normalizedConfig = this._normalizeConfig(config)
+    const { enabled, maxConcurrency, queueSize } = normalizedConfig
 
     // 验证参数
     if (!resourceId || typeof resourceId !== 'string') {
@@ -118,253 +175,358 @@ class ConcurrencyManager {
     // 未启用并发控制，直接返回空的 release 函数
     if (!enabled || maxConcurrency <= 0) {
       logger.debug(`🔓 Concurrency control disabled for ${resourceId}`)
-      return () => {} // 返回空的 release 函数
+      return () => {}
     }
 
-    // 获取或创建 Semaphore 实例
-    const semaphoreInfo = this._getSemaphoreInfo(resourceId, config)
-    const { semaphore } = semaphoreInfo
+    // 🔧 获取或创建 Bottleneck 实例
+    let limiter = this.limiters.get(resourceId)
 
-    // 队列计数键
-    const queueCountKey = `concurrency:queue:${resourceId}`
-    const redis = this._getRedisClient()
-    const queueKeyTtlSeconds = this._getQueueTtlSeconds(queueTimeout)
+    if (!limiter) {
+      // 首次创建
+      limiter = this._createLimiter(resourceId, normalizedConfig)
+      this.limiters.set(resourceId, limiter)
+      this.stats.totalCreated++
 
-    // 1. 入队前先"占位"——控制等待队列长度
-    const waiting = await redis.incr(queueCountKey)
-    // 设置/更新 TTL
-    await redis.expire(queueCountKey, queueKeyTtlSeconds)
-
-    if (waiting > queueSize) {
-      // 队列已满，撤销占位
-      await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
-      this.stats.totalQueueFull++
-
-      logger.warn(`🚫 Queue full for ${resourceId}: ${waiting - 1} waiting, max ${queueSize}`)
-
-      const error = new Error(
-        `Queue full: ${waiting - 1} requests waiting, maximum queue size is ${queueSize}`
+      logger.info(
+        `🆕 Created Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}, ttl=30m`
       )
-      error.code = 'QUEUE_FULL'
-      error.resourceId = resourceId
-      error.currentWaiting = waiting - 1
-      error.maxQueueSize = queueSize
-      throw error
+    } else {
+      // 🔄 动态更新配置（异步、带锁）
+      await this._updateLimiterConfig(limiter, resourceId, normalizedConfig)
     }
 
-    // 2. 尝试获取信号量（阻塞等待）
-    let acquired = false
-    // queueTimeout 为 0 表示永久等待，不设置超时
-    const timeoutMs = queueTimeout > 0 ? queueTimeout * 1000 : 0
-
-    try {
-      logger.debug(
-        `⏳ Acquiring slot for ${resourceId} (waiting: ${waiting - 1}, timeout: ${queueTimeout > 0 ? `${queueTimeout}s` : 'infinite'})`
-      )
-
-      // 使用 redis-semaphore 的 acquire 方法（支持超时）
-      await semaphore.acquire()
-      acquired = true
-      this.stats.totalAcquired++
-
-      // 获取成功后，减少等待计数
-      await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
-
-      logger.debug(`✅ Acquired slot for ${resourceId}`)
-
-      // 🎯 关键优化：检查客户端是否已经断开连接
-      // 如果客户端在等待期间断开了，立即释放槽位，不再继续执行
-      if (req.destroyed || req.socket?.destroyed || res.destroyed) {
-        this.stats.totalClientDisconnected++
-        logger.warn(
-          `🔌 Client already disconnected for ${resourceId}, releasing slot immediately (total: ${this.stats.totalClientDisconnected})`
-        )
-
-        // 立即释放
-        await semaphore.release()
-
-        const error = new Error('Client disconnected while waiting for slot')
-        error.code = 'CLIENT_DISCONNECTED'
-        error.resourceId = resourceId
-        throw error
-      }
-    } catch (error) {
-      // 获取失败时撤销占位
-      if (!acquired) {
-        await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
-      }
-
-      // 检查是否是超时错误
-      if (error.name === 'TimeoutError' || error.message?.includes('timeout')) {
-        this.stats.totalTimeout++
-        logger.warn(`⏱️ Timeout waiting for slot: ${resourceId} (waited ${queueTimeout}s)`)
-
-        const timeoutError = new Error(`Concurrency timeout after ${queueTimeout}s`)
-        timeoutError.code = 'TIMEOUT'
-        timeoutError.resourceId = resourceId
-        timeoutError.timeout = queueTimeout
-        timeoutError.timeoutMs = timeoutMs
-        throw timeoutError
-      }
-
-      throw error
-    }
-
-    // 3. 自动释放机制（监听所有可能的断开事件）
-    let released = false
-    const release = async () => {
-      if (!released) {
-        released = true
-        try {
-          await semaphore.release()
-          this.stats.totalReleased++
-          logger.debug(`🔓 Released slot for ${resourceId}`)
-        } catch (err) {
-          logger.error(`❌ Error releasing slot for ${resourceId}:`, err)
-        }
-      }
-    }
-
-    // 监听客户端断开和请求完成事件
-    // 注意：这些事件可能会重复触发，但 release() 有防重复机制
-    req.once('close', release) // 客户端关闭连接
-    req.once('aborted', release) // 请求被中止
-    res.once('close', release) // 响应关闭
-    res.once('finish', release) // 响应完成
-    res.once('error', release) // 响应错误
-
-    logger.debug(`🔗 Registered auto-release handlers for ${resourceId}`)
-
-    // 返回 release 函数供手动调用
-    return release
+    // 🎯 获取槽位
+    return await this._acquireSlot(limiter, resourceId, normalizedConfig, req, res)
   }
 
   /**
-   * 获取或创建 Semaphore 实例
+   * 创建 Bottleneck 实例
    * @private
    * @param {string} resourceId - 资源ID
    * @param {object} config - 并发配置
-   * @returns {object} Semaphore 信息对象
+   * @returns {Bottleneck} Bottleneck 实例
    */
-  _getSemaphoreInfo(resourceId, config) {
+  _createLimiter(resourceId, config) {
     const { maxConcurrency, queueSize, queueTimeout } = config
-
-    // 计算配置哈希（用于检测配置变化）
-    const configHash = this._hashConfig(config)
-
-    // 获取现有实例
-    const semaphoreInfo = this.semaphores.get(resourceId)
-
-    // 配置未变化，直接返回现有信息对象
-    if (semaphoreInfo && semaphoreInfo.configHash === configHash) {
-      return semaphoreInfo
-    }
-
-    // 配置变化或首次创建
-    logger.info(
-      `🆕 ${semaphoreInfo ? 'Recreating' : 'Creating'} Semaphore for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}`
-    )
-
-    // 创建新的 Semaphore 实例
     const redis = this._getRedisClient()
-    const semaphoreOptions = {
-      lockTimeout: 300000, // 占用租约（5分钟），防止忘记释放导致死锁
-      retryInterval: 100 // 重试间隔（毫秒）
+
+    const options = {
+      datastore: 'ioredis',
+      connection: redis,
+      id: resourceId, // Redis key 前缀
+      maxConcurrent: maxConcurrency,
+      highWater: queueSize,
+      strategy: Bottleneck.strategy.BLOCK, // 队列满则拒绝
+
+      // 租约超时（防止死锁）
+      timeout: 300000 // 5 分钟
     }
 
-    // queueTimeout > 0 时设置等待超时，否则永久等待
+    // 设置等待超时
     if (queueTimeout > 0) {
-      semaphoreOptions.acquireTimeout = queueTimeout * 1000
-    } else {
-      semaphoreOptions.acquireTimeout = Number.POSITIVE_INFINITY
+      options.expiration = queueTimeout * 1000
     }
 
-    const semaphore = new Semaphore(redis, `sem:${resourceId}`, maxConcurrency, semaphoreOptions)
-
-    // 存储实例
-    const newSemaphoreInfo = {
-      semaphore,
-      configHash,
-      createdAt: Date.now(),
-      maxConcurrency,
-      queueSize,
-      queueTimeout
-    }
-
-    this.semaphores.set(resourceId, newSemaphoreInfo)
-    this.stats.totalCreated++
-
-    // LRU 清理：超过限制时删除最早创建的实例
-    if (this.semaphores.size > this.maxInstances) {
-      this._evictOldest()
-    }
-
-    return newSemaphoreInfo
+    return new Bottleneck(options)
   }
 
   /**
-   * 计算配置哈希
+   * 动态更新配置（带双重检查锁定）
+   * 模式：if (needUpdate) { synchronized { if (needUpdate) { update() } } }
+   *
    * @private
-   * @param {object} config - 并发配置
-   * @returns {string} 配置哈希字符串
+   * @param {Bottleneck} limiter - Bottleneck 实例
+   * @param {string} resourceId - 资源ID
+   * @param {object} config - 新配置
+   * @returns {Promise<void>}
    */
-  _hashConfig(config) {
-    return `${config.maxConcurrency}:${config.queueSize}:${config.queueTimeout}`
-  }
+  async _updateLimiterConfig(limiter, resourceId, config) {
+    const { maxConcurrency, queueSize } = config
 
-  /**
-   * 计算队列计数键的有效TTL，确保在长时间等待时不会提前过期
-   * @param {number} queueTimeout - 配置中的等待超时（秒）
-   * @returns {number} TTL（秒）
-   */
-  _getQueueTtlSeconds(queueTimeout) {
-    if (queueTimeout > 0) {
-      // 为避免超时前过期，额外增加 60 秒缓冲
-      return Math.max(this.queueCountTTL, queueTimeout + 60)
-    }
-    return this.queueCountTTL
-  }
+    // 🔍 第一次检查（无锁 - 快速路径）
+    const currentSettings = limiter.getSettings()
+    const needUpdate =
+      currentSettings.maxConcurrent !== maxConcurrency || currentSettings.highWater !== queueSize
 
-  /**
-   * 递减队列计数，确保不会出现负数，并在需要时重置 TTL
-   * @param {object} redis - Redis 客户端
-   * @param {string} queueCountKey - 队列计数键
-   * @param {number} ttlSeconds - TTL（秒）
-   */
-  async _decrementQueueCount(redis, queueCountKey, ttlSeconds) {
-    const remaining = await redis.decr(queueCountKey)
-
-    if (remaining <= 0) {
-      await redis.del(queueCountKey)
-      return 0
+    if (!needUpdate) {
+      this.stats.totalConfigUpdateSkips++
+      return // 配置未变，无需更新
     }
 
-    await redis.expire(queueCountKey, ttlSeconds)
-    return remaining
-  }
+    // 🔒 获取/等待锁
+    let existingLock = this.updateLocks.get(resourceId)
 
-  /**
-   * LRU 清理：删除最早创建的实例
-   * @private
-   */
-  _evictOldest() {
-    let oldestKey = null
-    let oldestTime = Infinity
+    if (existingLock) {
+      // 有正在进行的更新，等待它完成
+      logger.debug(`⏳ Waiting for config update lock: ${resourceId}`)
+      await existingLock
+      this.stats.totalConfigUpdateSkips++
+      return // 更新已由其他调用完成
+    }
 
-    // 找到最早创建的实例
-    for (const [key, info] of this.semaphores.entries()) {
-      if (info.createdAt < oldestTime) {
-        oldestTime = info.createdAt
-        oldestKey = key
+    // 创建新锁（Promise）
+    let releaseLock
+    const lock = new Promise((resolve) => {
+      releaseLock = resolve
+    })
+
+    this.updateLocks.set(resourceId, lock)
+
+    try {
+      // 🔍 第二次检查（有锁 - 确认状态未变）
+      const latestSettings = limiter.getSettings()
+      const stillNeedUpdate =
+        latestSettings.maxConcurrent !== maxConcurrency || latestSettings.highWater !== queueSize
+
+      if (stillNeedUpdate) {
+        // ✅ 执行更新（原子操作）
+        limiter.updateSettings({
+          maxConcurrent: maxConcurrency,
+          highWater: queueSize
+        })
+
+        this.stats.totalConfigUpdates++
+
+        logger.info(
+          `🔄 Updated Bottleneck for ${resourceId}: ` +
+            `maxConcurrency=${latestSettings.maxConcurrent}->${maxConcurrency}, ` +
+            `queueSize=${latestSettings.highWater}->${queueSize}`
+        )
+      } else {
+        this.stats.totalConfigUpdateSkips++
+        logger.debug(`⏭️ Config already updated by concurrent call: ${resourceId}`)
       }
+    } finally {
+      // 🔓 释放锁
+      this.updateLocks.delete(resourceId)
+      releaseLock()
+    }
+  }
+
+  /**
+   * 获取槽位
+   * @private
+   * @param {Bottleneck} limiter - Bottleneck 实例
+   * @param {string} resourceId - 资源ID
+   * @param {object} config - 并发配置
+   * @param {object} req - Express request 对象
+   * @param {object} res - Express response 对象
+   * @returns {Promise<Function>} release 函数
+   */
+  async _acquireSlot(limiter, resourceId, config, req, res) {
+    const { queueTimeout } = config
+    const timeoutMs = queueTimeout * 1000
+
+    let earlyDisconnected = false
+
+    const onEarlyDisconnect = () => {
+      earlyDisconnected = true
     }
 
-    if (oldestKey) {
-      this.semaphores.delete(oldestKey)
-      this.stats.totalEvicted++
+    req.once('close', onEarlyDisconnect)
+    req.once('aborted', onEarlyDisconnect)
+
+    const cleanupEarlyListeners = () => {
+      req.removeListener('close', onEarlyDisconnect)
+      req.removeListener('aborted', onEarlyDisconnect)
+    }
+
+    let acquireResolve
+    let acquireReject
+    let acquireSettled = false
+
+    const acquirePromise = new Promise((resolve, reject) => {
+      acquireResolve = resolve
+      acquireReject = reject
+    })
+
+    const resolveAcquireOnce = (releaseFn) => {
+      if (acquireSettled) {
+        return
+      }
+      acquireSettled = true
+      acquireResolve(releaseFn)
+    }
+
+    const rejectAcquireOnce = (error) => {
+      if (acquireSettled) {
+        return
+      }
+      acquireSettled = true
+      acquireReject(error)
+    }
+
+    const job = () => {
+      return new Promise((resolveJob) => {
+        cleanupEarlyListeners()
+
+        if (earlyDisconnected) {
+          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          logger.info(`🔌 Client disconnected before acquiring slot: ${resourceId}`)
+          resolveJob()
+          rejectAcquireOnce(disconnectError)
+          return
+        }
+
+        let released = false
+
+        const cleanupActiveListeners = () => {
+          req.removeListener('close', handleDisconnect)
+          req.removeListener('aborted', handleDisconnect)
+          res.removeListener('close', handleDisconnect)
+          res.removeListener('finish', handleFinish)
+          res.removeListener('error', handleError)
+        }
+
+        const finalizeRelease = () => {
+          if (released) {
+            return
+          }
+          released = true
+          cleanupActiveListeners()
+          resolveJob()
+        }
+
+        const handleDisconnect = () => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          logger.info(`🔌 Client disconnected while holding slot: ${resourceId}`)
+          this.stats.totalReleased++
+          rejectAcquireOnce(disconnectError)
+        }
+
+        const handleError = (err) => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          this.stats.totalReleased++
+          logger.error(`❌ Response stream error while holding slot: ${resourceId}`, err)
+          rejectAcquireOnce(err)
+        }
+
+        const handleFinish = () => {
+          release()
+        }
+
+        const release = () => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          this.stats.totalReleased++
+          logger.debug(`🔓 Released slot for ${resourceId}`)
+        }
+
+        req.once('close', handleDisconnect)
+        req.once('aborted', handleDisconnect)
+        res.once('close', handleDisconnect)
+        res.once('finish', handleFinish)
+        res.once('error', handleError)
+
+        this.stats.totalAcquired++
+        logger.debug(`✅ Acquired slot for ${resourceId}`)
+
+        resolveAcquireOnce(() => {
+          release()
+        })
+      })
+    }
+
+    const scheduledPromise = limiter.schedule({ expiration: timeoutMs }, job)
+
+    scheduledPromise.catch(async (error) => {
+      cleanupEarlyListeners()
+
+      if (acquireSettled) {
+        return
+      }
+
+      try {
+        await this._handleAcquireError(error, resourceId, config, limiter)
+      } catch (handledError) {
+        rejectAcquireOnce(handledError)
+        return
+      }
+
+      rejectAcquireOnce(error)
+    })
+
+    return acquirePromise
+  }
+
+  /**
+   * 处理获取槽位错误
+   * @private
+   * @param {Error} error - 错误对象
+   * @param {string} resourceId - 资源ID
+   * @param {object} config - 并发配置
+   * @param {Bottleneck} limiter - Bottleneck 实例
+   * @throws {Error} 格式化后的错误
+   */
+  async _handleAcquireError(error, resourceId, config, limiter) {
+    // 🚫 队列满
+    if (error.message.includes('This job has been dropped by Bottleneck')) {
+      const counts = await limiter.counts()
+      this.stats.totalQueueFull++
+
       logger.warn(
-        `⚠️ Semaphore cache full (${this.maxInstances}), evicted oldest: ${oldestKey} (created ${new Date(oldestTime).toISOString()})`
+        `🚫 Queue full for ${resourceId}: ${counts.QUEUED} waiting, max ${config.queueSize}`
       )
+
+      const queueFullError = new Error(
+        `Queue full: ${counts.QUEUED} requests waiting, maximum queue size is ${config.queueSize}`
+      )
+      queueFullError.code = 'QUEUE_FULL'
+      queueFullError.resourceId = resourceId
+      queueFullError.currentWaiting = counts.QUEUED
+      queueFullError.maxQueueSize = config.queueSize
+      throw queueFullError
+    }
+
+    // ⏱️ 超时
+    if (error.message.includes('timeout') || error.message.includes('expiration')) {
+      this.stats.totalTimeout++
+
+      logger.warn(`⏱️ Timeout waiting for slot: ${resourceId} (waited ${config.queueTimeout}s)`)
+
+      const timeoutError = new Error(`Concurrency timeout after ${config.queueTimeout}s`)
+      timeoutError.code = 'TIMEOUT'
+      timeoutError.resourceId = resourceId
+      timeoutError.timeout = config.queueTimeout
+      timeoutError.timeoutMs = config.queueTimeout * 1000
+      throw timeoutError
+    }
+
+    // 其他错误
+    throw error
+  }
+
+  _buildClientDisconnectedError(resourceId) {
+    const err = new Error('Client disconnected while waiting for concurrency slot')
+    err.code = 'CLIENT_DISCONNECTED'
+    err.resourceId = resourceId
+    return err
+  }
+
+  /**
+   * 释放 Bottleneck 实例（自动清理）
+   * @private
+   * @param {string} resourceId - 资源ID
+   * @param {Bottleneck} limiter - Bottleneck 实例
+   */
+  _disposeLimiter(resourceId, limiter) {
+    try {
+      if (limiter && typeof limiter.disconnect === 'function') {
+        limiter.disconnect()
+        this.stats.totalDisposed++
+        logger.info(`🗑️ Auto-disposed Bottleneck for ${resourceId} (TTL expired)`)
+      }
+    } catch (error) {
+      logger.error(`❌ Failed to dispose Bottleneck for ${resourceId}:`, error)
     }
   }
 
@@ -372,28 +534,23 @@ class ConcurrencyManager {
    * 获取指定资源的统计信息
    *
    * @param {string} resourceId - 资源ID
-   * @returns {Promise<object|null>} 统计信息对象，包含 waiting、free、total、occupied
+   * @returns {Promise<object|null>} 统计信息对象，包含 waiting、running、total、free、occupied
    */
   async getStats(resourceId) {
-    const semaphoreInfo = this.semaphores.get(resourceId)
-    if (!semaphoreInfo) {
+    const limiter = this.limiters.get(resourceId)
+    if (!limiter) {
       return null
     }
 
-    const { maxConcurrency } = semaphoreInfo
-    const queueCountKey = `concurrency:queue:${resourceId}`
-    const redis = this._getRedisClient()
+    const counts = await limiter.counts()
+    const settings = limiter.getSettings()
 
-    // 从 Redis 获取等待队列长度
-    const waiting = parseInt((await redis.get(queueCountKey)) || '0', 10)
-
-    // 注意：redis-semaphore 没有直接的 API 获取当前占用数
-    // 这里我们只能返回配置的最大并发数和等待队列长度
     return {
-      waiting, // 等待中的请求数
-      total: maxConcurrency, // 最大并发数
-      // free 和 occupied 需要通过 Redis ZCARD 查询，这里暂时不实现
-      info: 'Use Redis ZCARD to get precise free/occupied counts'
+      waiting: counts.QUEUED,
+      running: counts.RUNNING,
+      total: settings.maxConcurrent,
+      free: settings.maxConcurrent - counts.RUNNING,
+      occupied: counts.RUNNING
     }
   }
 
@@ -405,43 +562,39 @@ class ConcurrencyManager {
   getGlobalStats() {
     return {
       ...this.stats,
-      totalSemaphores: this.semaphores.size,
-      maxInstances: this.maxInstances
+      totalLimiters: this.limiters.keys().length,
+      ttl: '30 minutes'
     }
   }
 
   /**
-   * 清除指定资源的 Semaphore 实例
-   * 通常在账号删除或配置更新时调用
-   *
-   * 注意：Redis 中的并发控制数据会通过 TTL 自动过期（10分钟），无需手动删除
+   * 清除指定资源的 Bottleneck 实例
+   * 通常在账号删除时调用
    *
    * @param {string} resourceId - 资源ID
    * @returns {boolean} 是否成功清除
    */
   clear(resourceId) {
-    const existed = this.semaphores.has(resourceId)
-    if (existed) {
-      this.semaphores.delete(resourceId)
-      logger.info(
-        `🗑️ Cleared Semaphore for ${resourceId} (Redis data will auto-expire in ${this.queueCountTTL}s)`
-      )
+    const limiter = this.limiters.get(resourceId)
+    if (limiter) {
+      this.limiters.del(resourceId) // 会触发 'del' 事件，自动调用 _disposeLimiter
+      return true
     }
-    return existed
+    return false
   }
 
   /**
-   * 清除所有 Semaphore 实例
+   * 清除所有 Bottleneck 实例
    * 通常在测试或重置时使用
-   *
-   * 注意：Redis 中的并发控制数据会通过 TTL 自动过期（10分钟），无需手动删除
    */
   clearAll() {
-    const count = this.semaphores.size
-    this.semaphores.clear()
-    logger.info(
-      `🗑️ Cleared all ${count} Semaphore instances (Redis data will auto-expire in ${this.queueCountTTL}s)`
-    )
+    const keys = this.limiters.keys()
+    const count = keys.length
+
+    // node-cache 的 flushAll() 会自动触发所有 'del' 事件
+    this.limiters.flushAll()
+
+    logger.info(`🗑️ Cleared all ${count} Bottleneck instances`)
   }
 
   /**
@@ -449,7 +602,7 @@ class ConcurrencyManager {
    * @returns {string[]} 资源ID列表
    */
   listResources() {
-    return Array.from(this.semaphores.keys())
+    return this.limiters.keys()
   }
 
   /**
@@ -458,7 +611,16 @@ class ConcurrencyManager {
    * @returns {boolean} 是否存在
    */
   has(resourceId) {
-    return this.semaphores.has(resourceId)
+    return this.limiters.has(resourceId)
+  }
+
+  /**
+   * 手动刷新资源的 TTL（重置 30 分钟）
+   * @param {string} resourceId - 资源ID
+   * @returns {boolean} 是否成功刷新
+   */
+  refreshTTL(resourceId) {
+    return this.limiters.ttl(resourceId, 1800) // 1800 秒 = 30 分钟
   }
 }
 

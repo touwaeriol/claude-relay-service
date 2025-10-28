@@ -50,6 +50,70 @@ class ClaudeConsoleAccountService {
     return parsed
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120
+    }
+
+    if (!concurrencyControl) {
+      return { ...defaults }
+    }
+
+    let parsed = concurrencyControl
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const clampNonNegative = (value, min = 0) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxConcurrency = clamp(coerceNumber(parsed.maxConcurrency, result.maxConcurrency), 1)
+    result.queueSize = clampNonNegative(coerceNumber(parsed.queueSize, result.queueSize))
+    result.queueTimeout = clamp(coerceNumber(parsed.queueTimeout, result.queueTimeout), 1)
+
+    return result
+  }
+
   // 🏢 创建Claude Console账户
   async createAccount(options = {}) {
     const {
@@ -66,7 +130,11 @@ class ClaudeConsoleAccountService {
       accountType = 'shared', // 'dedicated' or 'shared'
       schedulable = true, // 是否可被调度
       dailyQuota = 0, // 每日额度限制（美元），0表示不限制
-      quotaResetTime = '00:00' // 额度重置时间（HH:mm格式）
+      quotaResetTime = '00:00', // 额度重置时间（HH:mm格式）
+      // 🔒 独占会话和并发控制
+      exclusiveSessionOnly = false, // 是否只允许处理自身会话
+      enableMessageDigest = false, // 是否启用消息摘要验证
+      concurrencyControl = null // 并发控制配置（对象）
     } = options
 
     // 验证必填字段
@@ -78,6 +146,10 @@ class ClaudeConsoleAccountService {
 
     // 处理 supportedModels，确保向后兼容
     const processedModels = this._processModelMapping(supportedModels)
+
+    // 处理独占会话和摘要验证标志
+    const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
+    const digestEnabled = enableMessageDigest === true || enableMessageDigest === 'true'
 
     const accountData = {
       id: accountId,
@@ -113,7 +185,13 @@ class ClaudeConsoleAccountService {
       // 使用与统计一致的时区日期，避免边界问题
       lastResetDate: redis.getDateStringInTimezone(), // 最后重置日期（按配置时区）
       quotaResetTime, // 额度重置时间
-      quotaStoppedAt: '' // 因额度停用的时间
+      quotaStoppedAt: '', // 因额度停用的时间
+
+      // 🔒 独占会话和摘要验证
+      exclusiveSessionOnly: exclusiveEnabled.toString(),
+      enableMessageDigest: digestEnabled.toString(),
+      // 并发控制配置（JSON 对象）
+      concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
     }
 
     const client = redis.getClientSafe()
@@ -362,6 +440,32 @@ class ClaudeConsoleAccountService {
         } else {
           await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
         }
+      }
+
+      // 🔒 处理独占会话配置
+      if (updates.exclusiveSessionOnly !== undefined) {
+        const exclusiveFlag =
+          updates.exclusiveSessionOnly === true || updates.exclusiveSessionOnly === 'true'
+        updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+
+        // 如果 exclusiveSessionOnly 为 false，强制 enableMessageDigest 为 false
+        if (!exclusiveFlag) {
+          updatedData.enableMessageDigest = 'false'
+        }
+      }
+
+      // 🔒 处理消息摘要验证开关
+      if (updates.enableMessageDigest !== undefined) {
+        const digestFlag =
+          updates.enableMessageDigest === true || updates.enableMessageDigest === 'true'
+        updatedData.enableMessageDigest = digestFlag.toString()
+      }
+
+      // 🔒 处理并发控制配置
+      if (updates.concurrencyControl !== undefined) {
+        updatedData.concurrencyControl = JSON.stringify(
+          this._normalizeConcurrencyControl(updates.concurrencyControl)
+        )
       }
 
       updatedData.updatedAt = new Date().toISOString()

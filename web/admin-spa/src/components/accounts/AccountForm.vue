@@ -1085,8 +1085,7 @@
 
                 <div v-if="form.enableConcurrencyControl" class="mt-4 space-y-4">
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >最大并发数</label
                     >
                     <input
@@ -1102,8 +1101,7 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >队列长度</label
                     >
                     <input
@@ -1119,19 +1117,18 @@
                   </div>
 
                   <div>
-                    <label
-                      class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                    <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
                       >等待超时 (秒)</label
                     >
                     <input
                       v-model.number="form.queueTimeout"
                       class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      min="0"
-                      placeholder="默认120秒，0表示永久等待"
+                      min="1"
+                      placeholder="默认120秒，必须大于0"
                       type="number"
                     />
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      请求在队列中等待的最大时间（秒），0 表示永久等待
+                      请求在队列中等待的最大时间（秒），需要大于 0，超过后返回 503
                     </p>
                   </div>
                 </div>
@@ -1689,8 +1686,9 @@
               </label>
             </div>
 
-            <!-- 限制跨账号调度和会话保留时间配置（创建模式） -->
-            <div v-if="supportsExclusiveSessions" class="mt-4">
+            <!-- 独占会话配置（创建模式） -->
+            <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
+              <!-- 禁止跨账号调度 -->
               <label class="flex items-start">
                 <input
                   v-model="form.exclusiveSessionOnly"
@@ -1706,6 +1704,28 @@
                   </p>
                 </div>
               </label>
+
+              <!-- 校验会话摘要 -->
+              <div
+                v-if="form.exclusiveSessionOnly"
+                class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
+              >
+                <label class="flex items-start">
+                  <input
+                    v-model="form.enableMessageDigest"
+                    class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                    type="checkbox"
+                  />
+                  <div class="ml-3 flex-1">
+                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      校验会话摘要
+                    </span>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
+                    </p>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -2515,7 +2535,9 @@
             </label>
           </div>
 
-          <div v-if="supportsExclusiveSessions" class="mt-4">
+          <!-- 独占会话配置（编辑模式） -->
+          <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
+            <!-- 禁止跨账号调度 -->
             <label class="flex items-start">
               <input
                 v-model="form.exclusiveSessionOnly"
@@ -2531,6 +2553,28 @@
                 </p>
               </div>
             </label>
+
+            <!-- 校验会话摘要 -->
+            <div
+              v-if="form.exclusiveSessionOnly"
+              class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
+            >
+              <label class="flex items-start">
+                <input
+                  v-model="form.enableMessageDigest"
+                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                />
+                <div class="ml-3 flex-1">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    校验会话摘要
+                  </span>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
@@ -3419,8 +3463,6 @@ import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
 
-const DEFAULT_SESSION_RETENTION_SECONDS = 7 * 24 * 60 * 60
-
 const props = defineProps({
   account: {
     type: Object,
@@ -3569,6 +3611,61 @@ const normalizeProxyFormState = (rawProxy) => {
   return createDefaultProxyState()
 }
 
+const coerceNumberOrDefault = (value, fallback) => {
+  if (value === null || value === undefined || value === '') {
+    return fallback
+  }
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+const extractConcurrencyValue = (concurrencyConfig, key, fallback) => {
+  if (!concurrencyConfig) {
+    return fallback
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return fallback
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return fallback
+  }
+
+  return coerceNumberOrDefault(parsed[key], fallback)
+}
+
+const extractConcurrencyEnabled = (concurrencyConfig) => {
+  if (!concurrencyConfig) {
+    return false
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return false
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return false
+  }
+
+  return (
+    parsed.enabled === true ||
+    parsed.enabled === 'true' ||
+    parsed.enabled === 1 ||
+    parsed.enabled === '1'
+  )
+}
+
 const buildProxyPayload = (proxyState) => {
   if (!proxyState || !proxyState.enabled) {
     return null
@@ -3620,14 +3717,8 @@ const form = ref({
     props.account?.exclusiveSessionOnly !== undefined
       ? !!props.account?.exclusiveSessionOnly
       : false,
-  sessionRetentionSeconds: (() => {
-    const raw = props.account?.sessionRetentionSeconds
-    const parsed = Number(raw)
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed
-    }
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  })(),
+  enableMessageDigest:
+    props.account?.enableMessageDigest !== undefined ? !!props.account?.enableMessageDigest : false,
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3660,54 +3751,13 @@ const form = ref({
   userAgent: props.account?.userAgent || '',
   enableRateLimit: props.account ? props.account.rateLimitDuration > 0 : true,
   // 并发控制字段
-  enableConcurrencyControl: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.enabled === true
-      } catch (e) {
-        return false
-      }
-    }
-    return false
-  })(),
-  maxConcurrency: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.maxConcurrency || 10
-      } catch (e) {
-        return 10
-      }
-    }
-    return 10
-  })(),
-  queueSize: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.queueSize || 20
-      } catch (e) {
-        return 20
-      }
-    }
-    return 20
-  })(),
-  queueTimeout: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.queueTimeout || 120
-      } catch (e) {
-        return 120
-      }
-    }
-    return 120
-  })(),
+  enableConcurrencyControl: extractConcurrencyEnabled(props.account?.concurrencyControl),
+  maxConcurrency: extractConcurrencyValue(props.account?.concurrencyControl, 'maxConcurrency', 10),
+  queueSize: extractConcurrencyValue(props.account?.concurrencyControl, 'queueSize', 20),
+  queueTimeout: Math.max(
+    1,
+    extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120)
+  ),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
@@ -3768,27 +3818,12 @@ const commonModels = [
 // 模型映射表数据
 const modelMappings = ref([])
 
-const supportsExclusiveSessions = computed(() =>
-  ['claude', 'claude-console'].includes(form.value.platform)
-)
-
-const sessionRetentionDays = computed(() => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return '0'
-  }
-  const days = seconds / 86400
-  const rounded = Math.round(days * 100) / 100
-  return rounded % 1 === 0 ? String(rounded) : rounded.toFixed(2)
+// 判断是否支持独占会话配置（Claude 平台所有账户类型均支持）
+const supportsExclusiveSessions = computed(() => {
+  // Claude 平台（包括 OAuth、Setup Token）和 Claude Console 平台都支持独占会话
+  // CCR 等其他平台不支持
+  return form.value.platform === 'claude' || form.value.platform === 'claude-console'
 })
-
-const resolveSessionRetentionSeconds = () => {
-  const seconds = Number(form.value.sessionRetentionSeconds)
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return DEFAULT_SESSION_RETENTION_SECONDS
-  }
-  return Math.max(1, Math.floor(seconds))
-}
 
 // 初始化模型映射表
 const initModelMappings = () => {
@@ -3901,8 +3936,7 @@ const errors = ref({
   secretAccessKey: '',
   region: '',
   azureEndpoint: '',
-  deploymentName: '',
-  sessionRetentionSeconds: ''
+  deploymentName: ''
 })
 
 // 计算是否可以进入下一步
@@ -4243,15 +4277,15 @@ const handleOAuthSuccess = async (tokenInfo) => {
       }
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
       data.geminiOauth = tokenInfo.tokens || tokenInfo
@@ -4493,18 +4527,6 @@ const createAccount = async () => {
 
   // 分组类型验证 - 创建账户流程修复
   if (
-    ['claude', 'claude-console'].includes(form.value.platform) &&
-    form.value.exclusiveSessionOnly
-  ) {
-    const retention = Number(form.value.sessionRetentionSeconds)
-    if (!Number.isInteger(retention) || retention <= 0) {
-      errors.value.sessionRetentionSeconds = '请填写大于 0 的会话保留秒数'
-      hasError = true
-    }
-  }
-
-  // 分组类型验证 - 创建账户流程修复
-  if (
     form.value.accountType === 'group' &&
     (!form.value.groupIds || form.value.groupIds.length === 0)
   ) {
@@ -4570,10 +4592,10 @@ const createAccount = async () => {
       }
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     } else if (form.value.platform === 'gemini') {
       // Gemini手动模式需要构建geminiOauth对象
@@ -4660,15 +4682,15 @@ const createAccount = async () => {
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
@@ -4947,15 +4969,15 @@ const updateAccount = async () => {
         manuallySet: true // 标记为手动设置
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     }
 
@@ -4985,15 +5007,15 @@ const updateAccount = async () => {
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
       // 会话管理字段
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.sessionRetentionSeconds = data.exclusiveSessionOnly
-        ? resolveSessionRetentionSeconds()
-        : 0
+      data.enableMessageDigest = form.value.exclusiveSessionOnly
+        ? !!form.value.enableMessageDigest
+        : false
       // 并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     }
 
@@ -5099,36 +5121,6 @@ const updateAccount = async () => {
     loading.value = false
   }
 }
-
-// 监听表单名称变化，清除错误
-watch(
-  () => form.value.exclusiveSessionOnly,
-  (enabled) => {
-    const numeric = Number(form.value.sessionRetentionSeconds)
-    if (enabled && (!Number.isFinite(numeric) || numeric <= 0)) {
-      form.value.sessionRetentionSeconds = DEFAULT_SESSION_RETENTION_SECONDS
-    }
-    if (!enabled && errors.value.sessionRetentionSeconds) {
-      errors.value.sessionRetentionSeconds = ''
-    }
-  }
-)
-
-watch(
-  () => form.value.sessionRetentionSeconds,
-  (value) => {
-    if (!errors.value.sessionRetentionSeconds) {
-      return
-    }
-    const numeric = Number(value)
-    if (
-      !form.value.exclusiveSessionOnly ||
-      (Number.isFinite(numeric) && numeric > 0 && Number.isInteger(numeric))
-    ) {
-      errors.value.sessionRetentionSeconds = ''
-    }
-  }
-)
 
 // 监听表单名称变化，清除错误
 watch(
@@ -5569,6 +5561,10 @@ watch(
         useUnifiedUserAgent: newAccount.useUnifiedUserAgent || false,
         useUnifiedClientId: newAccount.useUnifiedClientId || false,
         unifiedClientId: newAccount.unifiedClientId || '',
+        exclusiveSessionOnly:
+          newAccount.exclusiveSessionOnly !== undefined ? !!newAccount.exclusiveSessionOnly : false,
+        enableMessageDigest:
+          newAccount.enableMessageDigest !== undefined ? !!newAccount.enableMessageDigest : false,
         groupId: groupId,
         groupIds: [],
         projectId: newAccount.projectId || '',
@@ -5813,6 +5809,25 @@ watch(
   (newPlatform) => {
     if (newPlatform === 'claude') {
       fetchUnifiedUserAgent()
+    }
+  }
+)
+
+// 监听 exclusiveSessionOnly 变化，关闭时自动关闭 enableMessageDigest
+watch(
+  () => form.value.exclusiveSessionOnly,
+  (newValue) => {
+    if (!newValue && form.value.enableMessageDigest) {
+      form.value.enableMessageDigest = false
+    }
+  }
+)
+
+watch(
+  () => form.value.queueTimeout,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== null && newValue <= 0) {
+      form.value.queueTimeout = 1
     }
   }
 )

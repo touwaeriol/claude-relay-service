@@ -54,6 +54,70 @@ class ClaudeAccountService {
     )
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120
+    }
+
+    if (!concurrencyControl) {
+      return { ...defaults }
+    }
+
+    let parsed = concurrencyControl
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const clampNonNegative = (value, min = 0) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxConcurrency = clamp(coerceNumber(parsed.maxConcurrency, result.maxConcurrency), 1)
+    result.queueSize = clampNonNegative(coerceNumber(parsed.queueSize, result.queueSize))
+    result.queueTimeout = clamp(coerceNumber(parsed.queueTimeout, result.queueTimeout), 1)
+
+    return result
+  }
+
   // 🏢 创建Claude账户
   async createAccount(options = {}) {
     const {
@@ -76,6 +140,7 @@ class ClaudeAccountService {
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
       exclusiveSessionOnly = false, // 是否只允许处理自身会话
+      enableMessageDigest = false, // 是否启用消息摘要验证
       extInfo = null, // 额外扩展信息
       // 并发控制配置（对象）
       concurrencyControl = null // { enabled, maxConcurrency, queueSize, queueTimeout }
@@ -87,6 +152,7 @@ class ClaudeAccountService {
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
 
     const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
+    const digestEnabled = enableMessageDigest === true || enableMessageDigest === 'true'
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -127,15 +193,9 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
+        enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: concurrencyControl
-          ? JSON.stringify({
-              enabled: concurrencyControl.enabled === true,
-              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
-              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
-              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
-            })
-          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
       }
     } else {
       // 兼容旧格式
@@ -171,15 +231,9 @@ class ClaudeAccountService {
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
         exclusiveSessionOnly: exclusiveEnabled.toString(),
+        enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: concurrencyControl
-          ? JSON.stringify({
-              enabled: concurrencyControl.enabled === true,
-              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
-              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
-              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
-            })
-          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
       }
     }
 
@@ -682,6 +736,7 @@ class ClaudeAccountService {
         'subscriptionExpiresAt',
         'extInfo',
         'exclusiveSessionOnly',
+        'enableMessageDigest',
         // 并发控制配置（对象）
         'concurrencyControl'
       ]
@@ -736,21 +791,15 @@ class ClaudeAccountService {
           } else if (field === 'exclusiveSessionOnly') {
             exclusiveFlag = value === true || value === 'true'
             updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+          } else if (field === 'enableMessageDigest') {
+            // 处理消息摘要验证开关，确保只有在 exclusiveSessionOnly 为 true 时才能启用
+            const digestFlag = value === true || value === 'true'
+            updatedData.enableMessageDigest = digestFlag.toString()
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
-            updatedData[field] = value
-              ? JSON.stringify({
-                  enabled: value.enabled === true,
-                  maxConcurrency: parseInt(value.maxConcurrency, 10) || 10,
-                  queueSize: parseInt(value.queueSize, 10) || 20,
-                  queueTimeout: parseInt(value.queueTimeout, 10) || 120
-                })
-              : JSON.stringify({
-                  enabled: false,
-                  maxConcurrency: 10,
-                  queueSize: 20,
-                  queueTimeout: 120
-                })
+            updatedData[field] = JSON.stringify(
+              this._normalizeConcurrencyControl(value)
+            )
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }
@@ -759,6 +808,11 @@ class ClaudeAccountService {
 
       // 设置 exclusiveSessionOnly 标志
       updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+
+      // 如果 exclusiveSessionOnly 为 false，强制 enableMessageDigest 为 false
+      if (!exclusiveFlag) {
+        updatedData.enableMessageDigest = 'false'
+      }
 
       // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (updates.refreshToken && !oldRefreshToken && updates.refreshToken.trim()) {
