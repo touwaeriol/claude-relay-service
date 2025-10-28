@@ -2,7 +2,9 @@ const axios = require('axios')
 const claudeConsoleAccountService = require('./claudeConsoleAccountService')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
+const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
+const { checkAccountSessionLimit } = require('../utils/sessionConcurrencyHelper')
 const {
   sanitizeUpstreamError,
   sanitizeErrorMessage,
@@ -26,12 +28,22 @@ class ClaudeConsoleRelayService {
   ) {
     let abortController = null
     let account = null
+    const sessionHash = sessionHelper.generateSessionHash(requestBody)
 
     try {
       // 获取账户信息
       account = await claudeConsoleAccountService.getAccount(accountId)
       if (!account) {
         throw new Error('Claude Console Claude account not found')
+      }
+
+      // 🔐 会话并发控制检查
+      const sessionLimitCheck = await checkAccountSessionLimit({
+        account,
+        sessionHash
+      })
+      if (!sessionLimitCheck.allowed) {
+        return sessionLimitCheck.error
       }
 
       // 🔒 并发控制：针对 claude-console 账户（非流式请求）
@@ -384,11 +396,24 @@ class ClaudeConsoleRelayService {
     options = {}
   ) {
     let account = null
+    const sessionHash = sessionHelper.generateSessionHash(requestBody)
+
     try {
       // 获取账户信息
       account = await claudeConsoleAccountService.getAccount(accountId)
       if (!account) {
         throw new Error('Claude Console Claude account not found')
+      }
+
+      // 🔐 会话并发控制检查（流式请求）
+      const sessionLimitCheckStream = await checkAccountSessionLimit({
+        account,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!sessionLimitCheckStream.allowed) {
+        return
       }
 
       // 🔒 并发控制：针对 claude-console 账户

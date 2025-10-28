@@ -114,6 +114,61 @@ class ClaudeConsoleAccountService {
     return result
   }
 
+  _normalizeSessionConcurrencyConfig(sessionConcurrencyConfig) {
+    const defaults = {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600 // 1小时
+    }
+
+    if (!sessionConcurrencyConfig) {
+      return { ...defaults }
+    }
+
+    let parsed = sessionConcurrencyConfig
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxSessions = clamp(coerceNumber(parsed.maxSessions, result.maxSessions), 1)
+    result.windowSeconds = clamp(coerceNumber(parsed.windowSeconds, result.windowSeconds), 60)
+
+    return result
+  }
+
   // 🏢 创建Claude Console账户
   async createAccount(options = {}) {
     const {
@@ -134,7 +189,8 @@ class ClaudeConsoleAccountService {
       // 🔒 独占会话和并发控制
       exclusiveSessionOnly = false, // 是否只允许处理自身会话
       enableMessageDigest = false, // 是否启用消息摘要验证
-      concurrencyControl = null // 并发控制配置（对象）
+      concurrencyControl = null, // 并发控制配置（对象）
+      sessionConcurrencyConfig = null // 会话并发控制配置（对象）
     } = options
 
     // 验证必填字段
@@ -191,7 +247,11 @@ class ClaudeConsoleAccountService {
       exclusiveSessionOnly: exclusiveEnabled.toString(),
       enableMessageDigest: digestEnabled.toString(),
       // 并发控制配置（JSON 对象）
-      concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
+      concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+      // 会话并发控制配置（JSON 对象）
+      sessionConcurrencyConfig: JSON.stringify(
+        this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+      )
     }
 
     const client = redis.getClientSafe()
@@ -465,6 +525,13 @@ class ClaudeConsoleAccountService {
       if (updates.concurrencyControl !== undefined) {
         updatedData.concurrencyControl = JSON.stringify(
           this._normalizeConcurrencyControl(updates.concurrencyControl)
+        )
+      }
+
+      // 🔒 处理会话并发控制配置
+      if (updates.sessionConcurrencyConfig !== undefined) {
+        updatedData.sessionConcurrencyConfig = JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(updates.sessionConcurrencyConfig)
         )
       }
 

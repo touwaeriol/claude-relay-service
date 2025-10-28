@@ -42,7 +42,7 @@ class UnifiedClaudeScheduler {
     }
 
     // 检查粘性会话绑定
-    let stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
+    const stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
 
     // 过滤规则：独占账户的处理逻辑
     const filtered = []
@@ -305,7 +305,8 @@ class UnifiedClaudeScheduler {
                 )
                 return {
                   accountId: apiKeyData.claudeAccountId,
-                  accountType: 'claude-official'
+                  accountType: 'claude-official',
+                  account: boundAccount
                 }
               }
             } else {
@@ -315,7 +316,8 @@ class UnifiedClaudeScheduler {
               )
               return {
                 accountId: apiKeyData.claudeAccountId,
-                accountType: 'claude-official'
+                accountType: 'claude-official',
+                account: boundAccount
               }
             }
           }
@@ -357,7 +359,8 @@ class UnifiedClaudeScheduler {
               )
               return {
                 accountId: apiKeyData.claudeConsoleAccountId,
-                accountType: 'claude-console'
+                accountType: 'claude-console',
+                account: boundConsoleAccount
               }
             }
           } else {
@@ -367,7 +370,8 @@ class UnifiedClaudeScheduler {
             )
             return {
               accountId: apiKeyData.claudeConsoleAccountId,
-              accountType: 'claude-console'
+              accountType: 'claude-console',
+              account: boundConsoleAccount
             }
           }
         } else {
@@ -1660,43 +1664,16 @@ class UnifiedClaudeScheduler {
   async _validateSessionDigest(accountId, sessionHash, messages) {
     try {
       const digestHelper = require('../utils/messageDigest')
-      const client = await redis.getClient()
+      const result = await digestHelper.validateAndStoreDigest(accountId, sessionHash, messages, {
+        allowCreate: false
+      })
 
-      // 1. 生成新摘要（只包含 user 消息）
-      const newDigest = digestHelper.generateDigest(messages)
-      logger.debug(
-        `📋 Generated new digest (length ${newDigest.length}): ${newDigest.substring(0, 50)}...`
-      )
-
-      // 2. 读取旧摘要
-      const digestKey = digestHelper.getDigestRedisKey(accountId, sessionHash)
-      const oldDigest = await client.get(digestKey)
-
-      if (oldDigest) {
-        logger.debug(
-          `📋 Retrieved old digest (length ${oldDigest.length}): ${oldDigest.substring(0, 50)}...`
-        )
-      } else {
-        logger.debug('📋 No existing digest found (first request)')
-      }
-
-      // 3. 验证
-      const validation = digestHelper.validateDigestUpdate(oldDigest, newDigest)
-
-      if (!validation.valid) {
-        logger.warn(`📋 Digest validation FAILED: ${validation.reason}`)
+      if (!result.valid) {
+        logger.warn(`📋 Digest validation FAILED: ${result.reason}`)
         return false
       }
 
-      logger.info(`📋 Digest validation PASSED: ${validation.action}`)
-
-      // 4. 更新摘要
-      const rawStickyHours = Number(config.session?.stickyTtlHours)
-      const ttlHours = Number.isFinite(rawStickyHours) && rawStickyHours > 0 ? rawStickyHours : 168
-      const ttl = Math.round(ttlHours * 3600)
-      await client.setex(digestKey, ttl, newDigest)
-      logger.debug(`📋 Updated digest in Redis (TTL: ${ttlHours} hours)`)
-
+      logger.info(`📋 Digest validation PASSED: ${result.action}`)
       return true
     } catch (error) {
       logger.error('❌ Error validating session digest:', error)

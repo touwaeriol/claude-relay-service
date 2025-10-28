@@ -118,6 +118,61 @@ class ClaudeAccountService {
     return result
   }
 
+  _normalizeSessionConcurrencyConfig(sessionConcurrencyConfig) {
+    const defaults = {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600 // 1小时
+    }
+
+    if (!sessionConcurrencyConfig) {
+      return { ...defaults }
+    }
+
+    let parsed = sessionConcurrencyConfig
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxSessions = clamp(coerceNumber(parsed.maxSessions, result.maxSessions), 1)
+    result.windowSeconds = clamp(coerceNumber(parsed.windowSeconds, result.windowSeconds), 60)
+
+    return result
+  }
+
   // 🏢 创建Claude账户
   async createAccount(options = {}) {
     const {
@@ -143,7 +198,9 @@ class ClaudeAccountService {
       enableMessageDigest = false, // 是否启用消息摘要验证
       extInfo = null, // 额外扩展信息
       // 并发控制配置（对象）
-      concurrencyControl = null // { enabled, maxConcurrency, queueSize, queueTimeout }
+      concurrencyControl = null, // { enabled, maxConcurrency, queueSize, queueTimeout }
+      // 会话并发控制配置（对象）
+      sessionConcurrencyConfig = null // { enabled, maxSessions, windowSeconds }
     } = options
 
     const accountId = uuidv4()
@@ -195,7 +252,11 @@ class ClaudeAccountService {
         exclusiveSessionOnly: exclusiveEnabled.toString(),
         enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+        // 会话并发控制配置（JSON 对象）
+        sessionConcurrencyConfig: JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+        )
       }
     } else {
       // 兼容旧格式
@@ -233,7 +294,11 @@ class ClaudeAccountService {
         exclusiveSessionOnly: exclusiveEnabled.toString(),
         enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+        // 会话并发控制配置（JSON 对象）
+        sessionConcurrencyConfig: JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+        )
       }
     }
 
@@ -738,7 +803,9 @@ class ClaudeAccountService {
         'exclusiveSessionOnly',
         'enableMessageDigest',
         // 并发控制配置（对象）
-        'concurrencyControl'
+        'concurrencyControl',
+        // 会话并发控制配置（对象）
+        'sessionConcurrencyConfig'
       ]
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
@@ -797,9 +864,10 @@ class ClaudeAccountService {
             updatedData.enableMessageDigest = digestFlag.toString()
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
-            updatedData[field] = JSON.stringify(
-              this._normalizeConcurrencyControl(value)
-            )
+            updatedData[field] = JSON.stringify(this._normalizeConcurrencyControl(value))
+          } else if (field === 'sessionConcurrencyConfig') {
+            // 处理会话并发控制配置
+            updatedData[field] = JSON.stringify(this._normalizeSessionConcurrencyConfig(value))
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }

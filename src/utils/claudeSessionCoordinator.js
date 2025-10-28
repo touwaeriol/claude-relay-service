@@ -1,6 +1,7 @@
 const redis = require('../models/redis')
 const config = require('../../config/config')
 const logger = require('./logger')
+const messageDigestHelper = require('./messageDigest')
 
 /**
  * 构建会话上下文
@@ -31,14 +32,22 @@ async function buildSessionContext(sessionHash, requestBody) {
 
 /**
  * 为账户注册会话（建立粘性会话绑定）
- * 仅在非新会话时建立绑定，使用固定的 7 天 TTL
+ * 默认仅在旧会话时建立绑定，但对独占账户在首个请求即绑定并初始化消息摘要
  *
  * @param {Object} selection - 账户选择结果 { accountId, accountType, account }
  * @param {Object} sessionContext - 会话上下文 { sessionHash, isNewSession }
  */
 async function registerSessionForAccount(selection, sessionContext) {
-  // 新会话不需要建立绑定（新会话可以被任何账户处理）
-  if (!sessionContext?.sessionHash || sessionContext.isNewSession) {
+  if (!sessionContext?.sessionHash) {
+    return
+  }
+
+  const accountInfo = selection?.account || {}
+  const isExclusive =
+    accountInfo?.exclusiveSessionOnly === true || accountInfo?.exclusiveSessionOnly === 'true'
+
+  if (!isExclusive && sessionContext.isNewSession) {
+    // 非独占账户保持原有行为：等待会话进入对话阶段后再绑定
     return
   }
 
@@ -68,6 +77,30 @@ async function registerSessionForAccount(selection, sessionContext) {
     logger.debug(
       `✅ Registered session ${sessionContext.sessionHash.substring(0, 8)}... to account ${accountId.substring(0, 8)}... (TTL: ${stickyTtlHours}h)`
     )
+
+    // 对启用摘要验证的独占账户，在首个请求时初始化摘要，确保后续消息可以校验
+    const digestEnabled =
+      accountInfo?.enableMessageDigest === true || accountInfo?.enableMessageDigest === 'true'
+    const messages = sessionContext?.requestBody?.messages
+
+    if (isExclusive && digestEnabled && Array.isArray(messages) && messages.length > 0) {
+      try {
+        const digestResult = await messageDigestHelper.validateAndStoreDigest(
+          accountId,
+          sessionContext.sessionHash,
+          messages,
+          { allowCreate: true }
+        )
+
+        if (!digestResult.valid) {
+          logger.warn(
+            `📋 Failed to initialize digest for exclusive session ${sessionContext.sessionHash.substring(0, 8)}...: ${digestResult.reason}`
+          )
+        }
+      } catch (error) {
+        logger.error('❌ Failed to initialize session digest:', error)
+      }
+    }
   } catch (error) {
     logger.error('❌ Failed to register session for account:', error)
   }

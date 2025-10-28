@@ -1,5 +1,7 @@
 const crypto = require('crypto')
 const logger = require('./logger')
+const redis = require('../models/redis')
+const config = require('../../config/config')
 
 const HASH_BLOCK_LENGTH = 32 // MD5 完整哈希 32位16进制
 
@@ -180,6 +182,72 @@ class MessageDigestHelper {
     }
 
     return blocks
+  }
+
+  _getDigestTtlSeconds() {
+    const rawStickyHours = Number(config.session?.stickyTtlHours)
+    const ttlHours = Number.isFinite(rawStickyHours) && rawStickyHours > 0 ? rawStickyHours : 168
+    return Math.max(1, Math.round(ttlHours * 3600))
+  }
+
+  async validateAndStoreDigest(accountId, sessionHash, messages, options = {}) {
+    const { allowCreate = true } = options
+
+    if (!accountId || !sessionHash) {
+      throw new Error('accountId and sessionHash are required for digest validation')
+    }
+
+    const client = redis.getClient()
+    if (!client) {
+      throw new Error('Redis client is not connected')
+    }
+
+    const digestKey = this.getDigestRedisKey(accountId, sessionHash)
+    const oldDigest = await client.get(digestKey)
+    const newDigest = this.generateDigest(messages)
+
+    if (!oldDigest) {
+      if (!allowCreate) {
+        return { valid: false, reason: 'Digest missing for existing session' }
+      }
+
+      const ttlSeconds = this._getDigestTtlSeconds()
+      await client.setex(digestKey, ttlSeconds, newDigest)
+      logger.debug(
+        `📋 Created new digest (length ${newDigest.length}) for session ${sessionHash.substring(0, 8)}...`
+      )
+
+      return {
+        valid: true,
+        action: 'create',
+        oldDigest: null,
+        newDigest
+      }
+    }
+
+    const validation = this.validateDigestUpdate(oldDigest, newDigest)
+
+    if (!validation.valid) {
+      return {
+        valid: false,
+        reason: validation.reason,
+        oldDigest,
+        newDigest
+      }
+    }
+
+    const ttlSeconds = this._getDigestTtlSeconds()
+    await client.setex(digestKey, ttlSeconds, newDigest)
+    logger.debug(
+      `📋 Updated digest (action: ${validation.action}) for session ${sessionHash.substring(0, 8)}...`
+    )
+
+    return {
+      valid: true,
+      action: validation.action,
+      oldDigest,
+      newDigest
+    }
   }
 }
 

@@ -9,6 +9,8 @@
  */
 
 const redis = require('../src/models/redis')
+const sessionCoordinator = require('../src/utils/claudeSessionCoordinator')
+const messageDigestHelper = require('../src/utils/messageDigest')
 
 /**
  * 构建会话上下文（从 claudeSessionCoordinator.js 提取）
@@ -48,7 +50,12 @@ async function registerSessionForAccount(accountId, sessionContext, ttl = 25200)
 /**
  * 刷新会话保留时间
  */
-async function refreshSessionRetention(accountId, sessionContext, ttl = 25200, renewalThreshold = 3600) {
+async function refreshSessionRetention(
+  accountId,
+  sessionContext,
+  ttl = 25200,
+  renewalThreshold = 3600
+) {
   if (!sessionContext?.sessionHash || sessionContext.isNewSession) {
     return false
   }
@@ -141,7 +148,10 @@ describe('会话管理功能测试', () => {
   describe('会话识别', () => {
     test('只有user消息应识别为新会话', () => {
       const requestBody = {
-        messages: [{ role: 'user', content: 'Hello' }, { role: 'user', content: 'World' }]
+        messages: [
+          { role: 'user', content: 'Hello' },
+          { role: 'user', content: 'World' }
+        ]
       }
 
       const context = buildSessionContext('hash-001', requestBody)
@@ -381,5 +391,42 @@ describe('会话管理功能测试', () => {
       const newTtl = await client.ttl(`sticky_session:${oldContext.sessionHash}`)
       expect(newTtl).toBeGreaterThan(7000)
     }, 15000)
+  })
+
+  describe('真实模块 - 独占会话初次绑定', () => {
+    test('独占账户的新会话应立即绑定并初始化摘要', async () => {
+      const selection = {
+        accountId: 'exclusive-account-100',
+        accountType: 'claude-official',
+        account: {
+          id: 'exclusive-account-100',
+          exclusiveSessionOnly: 'true',
+          enableMessageDigest: 'true'
+        }
+      }
+
+      const sessionHash = 'exclusive-session-100'
+      const requestBody = {
+        messages: [{ role: 'user', content: 'Hello exclusive account' }]
+      }
+
+      const sessionContext = await sessionCoordinator.buildSessionContext(sessionHash, requestBody)
+      expect(sessionContext.isNewSession).toBe(true)
+
+      await sessionCoordinator.registerSessionForAccount(selection, sessionContext)
+
+      const client = redis.getClient()
+      const stickyKey = `sticky_session:${sessionHash}`
+      const digestKey = messageDigestHelper.getDigestRedisKey(selection.accountId, sessionHash)
+
+      const boundAccount = await client.get(stickyKey)
+      const storedDigest = await client.get(digestKey)
+      const expectedDigest = messageDigestHelper.generateDigest(requestBody.messages)
+
+      expect(boundAccount).toBe(selection.accountId)
+      expect(storedDigest).toBe(expectedDigest)
+
+      await client.del(stickyKey, digestKey)
+    })
   })
 })

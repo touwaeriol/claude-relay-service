@@ -1,5 +1,5 @@
 const Bottleneck = require('bottleneck')
-const NodeCache = require('node-cache')
+const { LRUCache } = require('lru-cache')
 const IORedis = require('ioredis')
 const logger = require('../utils/logger')
 const appConfig = require('../../config/config')
@@ -41,24 +41,23 @@ const appConfig = require('../../config/config')
 class ConcurrencyManager {
   constructor() {
     /**
-     * Bottleneck 实例缓存（基于 node-cache）
+     * Bottleneck 实例缓存（基于 LRUCache）
      * 自动特性：
      * - 30 分钟未访问自动删除
-     * - 每次访问自动重置 TTL
+     * - get/has 时自动刷新 TTL
      * - 删除时自动断开 Bottleneck 连接
      */
-    this.limiters = new NodeCache({
-      stdTTL: 1800, // 30 分钟（秒）
-      checkperiod: 120, // 每 2 分钟检查过期
-      useClones: false, // 不克隆对象（性能优化）
-      deleteOnExpire: true // 过期时删除
-    })
-
-    /**
-     * 监听删除事件（自动清理资源）
-     */
-    this.limiters.on('del', (key, value) => {
-      this._disposeLimiter(key, value)
+    this.limiterTtlMs = 30 * 60 * 1000
+    this.limiters = new LRUCache({
+      max: 10000,
+      ttl: this.limiterTtlMs,
+      ttlAutopurge: true,
+      updateAgeOnGet: true,
+      updateAgeOnHas: true,
+      noDisposeOnSet: true,
+      dispose: (value, key, reason) => {
+        this._disposeLimiter(key, value, reason)
+      }
     })
 
     /**
@@ -142,7 +141,7 @@ class ConcurrencyManager {
    */
   _getRedisConnection() {
     if (!this.redisConnection) {
-      const IORedisConnection = Bottleneck.IORedisConnection
+      const { IORedisConnection } = Bottleneck
       const redisOptions = {
         host: appConfig.redis.host,
         port: appConfig.redis.port,
@@ -213,7 +212,7 @@ class ConcurrencyManager {
     if (!limiter) {
       // 首次创建
       limiter = this._createLimiter(resourceId, normalizedConfig)
-      this.limiters.set(resourceId, limiter)
+      this.limiters.set(resourceId, limiter, { ttl: this.limiterTtlMs })
       this.stats.totalCreated++
 
       logger.info(
@@ -283,7 +282,7 @@ class ConcurrencyManager {
     }
 
     // 🔒 获取/等待锁
-    let existingLock = this.updateLocks.get(resourceId)
+    const existingLock = this.updateLocks.get(resourceId)
 
     if (existingLock) {
       // 有正在进行的更新，等待它完成
@@ -385,8 +384,8 @@ class ConcurrencyManager {
       acquireReject(error)
     }
 
-    const job = () => {
-      return new Promise((resolveJob) => {
+    const job = () =>
+      new Promise((resolveJob) => {
         cleanupEarlyListeners()
 
         if (earlyDisconnected) {
@@ -463,7 +462,6 @@ class ConcurrencyManager {
           release()
         })
       })
-    }
 
     const scheduledPromise = limiter.schedule({ expiration: timeoutMs }, job)
 
@@ -547,12 +545,14 @@ class ConcurrencyManager {
    * @param {string} resourceId - 资源ID
    * @param {Bottleneck} limiter - Bottleneck 实例
    */
-  _disposeLimiter(resourceId, limiter) {
+  _disposeLimiter(resourceId, limiter, reason = 'unknown') {
     try {
       if (limiter && typeof limiter.disconnect === 'function') {
         limiter.disconnect()
         this.stats.totalDisposed++
-        logger.info(`🗑️ Auto-disposed Bottleneck for ${resourceId} (TTL expired)`)
+        logger.info(
+          `🗑️ Auto-disposed Bottleneck for ${resourceId} (reason: ${reason || 'unknown'})`
+        )
       }
     } catch (error) {
       logger.error(`❌ Failed to dispose Bottleneck for ${resourceId}:`, error)
@@ -591,7 +591,7 @@ class ConcurrencyManager {
   getGlobalStats() {
     return {
       ...this.stats,
-      totalLimiters: this.limiters.keys().length,
+      totalLimiters: this.limiters.size,
       ttl: '30 minutes'
     }
   }
@@ -606,7 +606,7 @@ class ConcurrencyManager {
   clear(resourceId) {
     const limiter = this.limiters.get(resourceId)
     if (limiter) {
-      this.limiters.del(resourceId) // 会触发 'del' 事件，自动调用 _disposeLimiter
+      this.limiters.delete(resourceId)
       return true
     }
     return false
@@ -617,11 +617,8 @@ class ConcurrencyManager {
    * 通常在测试或重置时使用
    */
   clearAll() {
-    const keys = this.limiters.keys()
-    const count = keys.length
-
-    // node-cache 的 flushAll() 会自动触发所有 'del' 事件
-    this.limiters.flushAll()
+    const count = this.limiters.size
+    this.limiters.clear()
 
     logger.info(`🗑️ Cleared all ${count} Bottleneck instances`)
   }
@@ -631,7 +628,7 @@ class ConcurrencyManager {
    * @returns {string[]} 资源ID列表
    */
   listResources() {
-    return this.limiters.keys()
+    return Array.from(this.limiters.keys())
   }
 
   /**
@@ -649,7 +646,12 @@ class ConcurrencyManager {
    * @returns {boolean} 是否成功刷新
    */
   refreshTTL(resourceId) {
-    return this.limiters.ttl(resourceId, 1800) // 1800 秒 = 30 分钟
+    const limiter = this.limiters.get(resourceId)
+    if (!limiter) {
+      return false
+    }
+    this.limiters.set(resourceId, limiter, { ttl: this.limiterTtlMs })
+    return true
   }
 }
 

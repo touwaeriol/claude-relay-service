@@ -2405,7 +2405,8 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       exclusiveSessionOnly,
       enableMessageDigest,
       // 并发控制配置（对象）
-      concurrencyControl
+      concurrencyControl,
+      sessionConcurrencyConfig
     } = req.body
 
     if (!name) {
@@ -2455,7 +2456,8 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       exclusiveSessionOnly: exclusiveSessionOnly === true, // 是否只允许处理自身会话
       enableMessageDigest: enableMessageDigest === true, // 是否启用消息摘要验证
       // 并发控制配置（对象）
-      concurrencyControl: concurrencyControl || null
+      concurrencyControl: concurrencyControl || null,
+      sessionConcurrencyConfig: sessionConcurrencyConfig || null
     })
 
     // 如果是分组类型，将账户添加到分组
@@ -2843,7 +2845,8 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       // 🔒 独占会话和并发控制
       exclusiveSessionOnly,
       enableMessageDigest,
-      concurrencyControl
+      concurrencyControl,
+      sessionConcurrencyConfig
     } = req.body
 
     if (!name || !apiUrl || !apiKey) {
@@ -2884,7 +2887,8 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       // 🔒 独占会话和并发控制
       exclusiveSessionOnly: exclusiveSessionOnly === true,
       enableMessageDigest: enableMessageDigest === true,
-      concurrencyControl: concurrencyControl || null
+      concurrencyControl: concurrencyControl || null,
+      sessionConcurrencyConfig: sessionConcurrencyConfig || null
     })
 
     // 如果是分组类型，将账户添加到分组（CCR 归属 Claude 平台分组）

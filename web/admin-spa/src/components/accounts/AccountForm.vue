@@ -1671,6 +1671,9 @@
                 }"
                 title="启用并发控制"
               />
+
+              <!-- 会话并发控制配置 (仅 Claude Code/Console 账户) -->
+              <SessionConcurrencyConfigCard v-model="sessionConcurrencyConfig" />
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -2520,6 +2523,21 @@
                 </div>
               </label>
             </div>
+
+            <!-- 并发控制配置 (仅 Claude Code/Console 账户，编辑模式) -->
+            <ConcurrencyConfigCard
+              v-model="concurrencyConfig"
+              description="启用后，限制该账户的最大并发请求数和队列长度"
+              :placeholders="{
+                maxConcurrency: '默认10',
+                queueSize: '默认20',
+                queueTimeout: '默认120'
+              }"
+              title="启用并发控制"
+            />
+
+            <!-- 会话并发控制配置 (仅 Claude Code/Console 账户，编辑模式) -->
+            <SessionConcurrencyConfigCard v-model="sessionConcurrencyConfig" />
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
@@ -3408,6 +3426,7 @@ import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
 import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
+import SessionConcurrencyConfigCard from '@/components/common/SessionConcurrencyConfigCard.vue'
 
 const props = defineProps({
   account: {
@@ -3704,6 +3723,16 @@ const form = ref({
     1,
     extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120)
   ),
+  // 会话并发控制字段
+  enableSessionConcurrencyControl: extractConcurrencyEnabled(
+    props.account?.sessionConcurrencyConfig
+  ),
+  maxSessions: extractConcurrencyValue(props.account?.sessionConcurrencyConfig, 'maxSessions', 10),
+  windowSeconds: extractConcurrencyValue(
+    props.account?.sessionConcurrencyConfig,
+    'windowSeconds',
+    3600
+  ),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
@@ -3751,6 +3780,20 @@ const concurrencyConfig = computed({
     form.value.maxConcurrency = value.maxConcurrency
     form.value.queueSize = value.queueSize
     form.value.queueTimeout = value.queueTimeout
+  }
+})
+
+// 会话并发配置计算属性（用于 SessionConcurrencyConfigCard 组件）
+const sessionConcurrencyConfig = computed({
+  get: () => ({
+    enabled: form.value.enableSessionConcurrencyControl,
+    maxSessions: form.value.maxSessions,
+    windowSeconds: form.value.windowSeconds
+  }),
+  set: (value) => {
+    form.value.enableSessionConcurrencyControl = value.enabled
+    form.value.maxSessions = value.maxSessions
+    form.value.windowSeconds = value.windowSeconds
   }
 })
 
@@ -4244,6 +4287,12 @@ const handleOAuthSuccess = async (tokenInfo) => {
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
         queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
+      }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
       data.enableMessageDigest = form.value.exclusiveSessionOnly
         ? !!form.value.enableMessageDigest
@@ -4559,6 +4608,12 @@ const createAccount = async () => {
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
         queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
+      }
     } else if (form.value.platform === 'gemini') {
       // Gemini手动模式需要构建geminiOauth对象
       const expiresInMs = form.value.refreshToken
@@ -4653,6 +4708,12 @@ const createAccount = async () => {
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
         queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
@@ -4941,6 +5002,12 @@ const updateAccount = async () => {
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
         queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
+      // 会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
+      }
     }
 
     // OpenAI 账号优先级更新
@@ -4978,6 +5045,12 @@ const updateAccount = async () => {
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
         queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
     }
 

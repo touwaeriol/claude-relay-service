@@ -7,6 +7,7 @@ const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
+const { checkAccountSessionLimit } = require('../utils/sessionConcurrencyHelper')
 const {
   buildSessionContext,
   registerSessionForAccount,
@@ -169,6 +170,15 @@ class ClaudeRelayService {
       if (isOpusModelRequest) {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
+      }
+
+      // 🔐 会话并发控制检查
+      const sessionLimitCheck = await checkAccountSessionLimit({
+        account,
+        sessionHash
+      })
+      if (!sessionLimitCheck.allowed) {
+        return sessionLimitCheck.error
       }
 
       // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
@@ -1302,6 +1312,17 @@ class ClaudeRelayService {
       if (isOpusModelRequest) {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
+      }
+
+      // 🔐 会话并发控制检查（流式请求）
+      const sessionLimitCheckStream = await checkAccountSessionLimit({
+        account,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!sessionLimitCheckStream.allowed) {
+        return
       }
 
       // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
