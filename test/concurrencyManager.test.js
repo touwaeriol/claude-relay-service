@@ -143,7 +143,8 @@ describe('ConcurrencyManager', () => {
       expect(concurrencyManager.has('test-resource')).toBe(false)
     })
 
-    test('maxConcurrency <= 0 时应直接返回', async () => {
+    test('maxConcurrency <= 0 时应自动规范化为 1', async () => {
+      const resourceId = 'normalize-max-concurrency'
       const { req, res } = createMockReqRes()
       const config = {
         enabled: true,
@@ -152,11 +153,14 @@ describe('ConcurrencyManager', () => {
         queueTimeout: 30
       }
 
-      await expect(
-        concurrencyManager.waitForSlot('test-resource', config, req, res)
-      ).resolves.toBeDefined()
+      const release = await concurrencyManager.waitForSlot(resourceId, config, req, res)
+      expect(typeof release).toBe('function')
 
-      expect(concurrencyManager.has('test-resource')).toBe(false)
+      const stats = await concurrencyManager.getStats(resourceId)
+      expect(stats).not.toBeNull()
+      expect(stats.total).toBe(1)
+
+      await release()
     })
 
     test('参数验证 - resourceId 必须是非空字符串', async () => {

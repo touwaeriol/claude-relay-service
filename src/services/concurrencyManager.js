@@ -1,6 +1,8 @@
 const Bottleneck = require('bottleneck')
 const NodeCache = require('node-cache')
+const IORedis = require('ioredis')
 const logger = require('../utils/logger')
+const appConfig = require('../../config/config')
 
 /**
  * 并发控制管理器（基于 Bottleneck + node-cache）
@@ -60,9 +62,9 @@ class ConcurrencyManager {
     })
 
     /**
-     * Redis 客户端（懒加载）
+     * Bottleneck IORedisConnection（与全局Redis客户端共享）
      */
-    this.redis = null
+    this.redisConnection = null
 
     /**
      * 配置更新锁（防止并发更新竞态条件）
@@ -133,15 +135,42 @@ class ConcurrencyManager {
    * @private
    * @returns {object} Redis 客户端实例
    */
-  _getRedisClient() {
-    if (!this.redis) {
-      const redisModel = require('../models/redis')
-      this.redis = redisModel.getClient()
-      if (!this.redis) {
-        throw new Error('Redis client is not connected')
+  /**
+   * 获取 Bottleneck IORedisConnection（懒加载，复用全局 Redis 客户端）
+   * @private
+   * @returns {import('bottleneck').IORedisConnection}
+   */
+  _getRedisConnection() {
+    if (!this.redisConnection) {
+      const IORedisConnection = Bottleneck.IORedisConnection
+      const redisOptions = {
+        host: appConfig.redis.host,
+        port: appConfig.redis.port,
+        password: appConfig.redis.password || undefined,
+        db: appConfig.redis.db,
+        lazyConnect: false,
+        maxRetriesPerRequest: appConfig.redis.maxRetriesPerRequest,
+        retryDelayOnFailover: appConfig.redis.retryDelayOnFailover,
+        connectTimeout: appConfig.redis.connectTimeout
       }
+
+      if (appConfig.redis.enableTLS) {
+        redisOptions.tls = {}
+      }
+
+      Object.keys(redisOptions).forEach((key) => {
+        if (redisOptions[key] === undefined || redisOptions[key] === null) {
+          delete redisOptions[key]
+        }
+      })
+
+      this.redisConnection = new IORedisConnection({
+        clientOptions: redisOptions,
+        Redis: IORedis,
+        Promise
+      })
     }
-    return this.redis
+    return this.redisConnection
   }
 
   /**
@@ -208,11 +237,11 @@ class ConcurrencyManager {
    */
   _createLimiter(resourceId, config) {
     const { maxConcurrency, queueSize, queueTimeout } = config
-    const redis = this._getRedisClient()
+    const redisConnection = this._getRedisConnection()
 
     const options = {
       datastore: 'ioredis',
-      connection: redis,
+      connection: redisConnection,
       id: resourceId, // Redis key 前缀
       maxConcurrent: maxConcurrency,
       highWater: queueSize,

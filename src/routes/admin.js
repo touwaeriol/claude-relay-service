@@ -10,6 +10,7 @@ const openaiAccountService = require('../services/openaiAccountService')
 const openaiResponsesAccountService = require('../services/openaiResponsesAccountService')
 const azureOpenaiAccountService = require('../services/azureOpenaiAccountService')
 const accountGroupService = require('../services/accountGroupService')
+const concurrencyManager = require('../services/concurrencyManager')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -92,6 +93,63 @@ function formatAccountExpiry(account) {
     subscriptionExpiresAt,
     tokenExpiresAt,
     expiresAt: subscriptionExpiresAt
+  }
+}
+
+/**
+ * 获取账户的并发统计信息
+ * @param {Object} account - 账户对象
+ * @returns {Promise<Object>} 并发统计对象 { maxQueueSize, currentWaiting, maxConcurrency, currentRunning }
+ */
+async function getConcurrencyStats(account) {
+  // 默认值
+  const defaultStats = {
+    maxQueueSize: 0,
+    currentWaiting: 0,
+    maxConcurrency: 0,
+    currentRunning: 0
+  }
+
+  // 检查账户是否配置了并发控制
+  if (!account || !account.concurrencyControl) {
+    return defaultStats
+  }
+
+  try {
+    // 解析并发控制配置
+    let config
+    try {
+      config = JSON.parse(account.concurrencyControl)
+    } catch (parseError) {
+      logger.warn(
+        `Failed to parse concurrencyControl for account ${account.id}:`,
+        parseError.message
+      )
+      return defaultStats
+    }
+
+    // 检查是否启用
+    if (!config.enabled) {
+      return defaultStats
+    }
+
+    // 从配置获取最大值
+    const maxQueueSize = config.queueSize || 0
+    const maxConcurrency = config.maxConcurrency || 0
+
+    // 从 concurrencyManager 获取实时统计
+    const stats = await concurrencyManager.getStats(account.id)
+
+    // 返回结果：配置的最大值 + 实时的当前值（如果没有实时统计则为0）
+    return {
+      maxQueueSize,
+      currentWaiting: stats?.waiting || 0,
+      maxConcurrency,
+      currentRunning: stats?.running || 0
+    }
+  } catch (error) {
+    logger.error(`Failed to get concurrency stats for account ${account.id}:`, error.message)
+    return defaultStats
   }
 }
 
@@ -2186,6 +2244,9 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
             }
           }
 
+          // 获取并发统计
+          const concurrencyStats = await getConcurrencyStats(account)
+
           const formattedAccount = formatAccountExpiry(account)
           return {
             ...formattedAccount,
@@ -2197,13 +2258,15 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
               total: usageStats.total,
               averages: usageStats.averages,
               sessionWindow: sessionWindowUsage
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(`⚠️ Failed to get usage stats for account ${account.id}:`, statsError.message)
           // 如果获取统计失败，返回空统计
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2213,13 +2276,15 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 },
                 sessionWindow: null
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2229,7 +2294,8 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 },
                 sessionWindow: null
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
@@ -2690,6 +2756,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
         try {
           const usageStats = await redis.getAccountUsageStats(account.id, 'openai')
           const groupInfos = await accountGroupService.getAccountGroups(account.id)
+          const concurrencyStats = await getConcurrencyStats(account)
 
           const formattedAccount = formatAccountExpiry(account)
           return {
@@ -2701,7 +2768,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
               daily: usageStats.daily,
               total: usageStats.total,
               averages: usageStats.averages
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(
@@ -2710,6 +2778,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
           )
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2720,13 +2789,15 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for Claude Console account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2735,7 +2806,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
@@ -3125,6 +3197,7 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
         try {
           const usageStats = await redis.getAccountUsageStats(account.id)
           const groupInfos = await accountGroupService.getAccountGroups(account.id)
+          const concurrencyStats = await getConcurrencyStats(account)
 
           const formattedAccount = formatAccountExpiry(account)
           return {
@@ -3136,7 +3209,8 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
               daily: usageStats.daily,
               total: usageStats.total,
               averages: usageStats.averages
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(
@@ -3145,6 +3219,7 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
           )
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -3155,13 +3230,15 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for CCR account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             return {
               ...account,
               groupInfos: [],
@@ -3169,7 +3246,8 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
