@@ -1066,9 +1066,10 @@
                   </p>
                 </div>
               </div>
+            </div>
 
-              <!-- 并发控制配置 (仅 Claude Code/Console 账户) -->
-              <div v-if="form.platform === 'claude' || form.platform === 'claude-console'">
+            <!-- 并发控制配置 (仅 Claude Code/Console 账户) -->
+            <div v-if="form.platform === 'claude' || form.platform === 'claude-console'">
                 <div>
                   <label class="inline-flex cursor-pointer items-center">
                     <input
