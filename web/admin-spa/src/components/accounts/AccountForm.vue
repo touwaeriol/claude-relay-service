@@ -3815,20 +3815,11 @@ const commonModels = [
 // 模型映射表数据
 const modelMappings = ref([])
 
-// 判断是否支持独占会话配置（仅 Claude Setup Token 支持）
+// 判断是否支持独占会话配置（Claude 平台所有账户类型均支持）
 const supportsExclusiveSessions = computed(() => {
-  // 必须是 claude 平台
-  if (form.value.platform !== 'claude') {
-    return false
-  }
-
-  // 创建模式：默认不显示（因为还不知道是否是 Setup Token）
-  if (!props.account) {
-    return false
-  }
-
-  // 编辑模式：必须是 setup-token 类型
-  return props.account.authType === 'setup-token'
+  // Claude 平台（包括 OAuth、Setup Token）和 Claude Console 平台都支持独占会话
+  // CCR 等其他平台不支持
+  return form.value.platform === 'claude' || form.value.platform === 'claude-console'
 })
 
 // 初始化模型映射表

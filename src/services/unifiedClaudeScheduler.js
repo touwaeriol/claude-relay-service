@@ -5,6 +5,7 @@ const ccrAccountService = require('./ccrAccountService')
 const accountGroupService = require('./accountGroupService')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
+const config = require('../../config/config')
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
 
 class UnifiedClaudeScheduler {
@@ -89,6 +90,17 @@ class UnifiedClaudeScheduler {
         // 清除粘性会话绑定
         await redis.delSessionAccountMapping(sessionHash)
         stickyAccountId = null // 更新局部变量，允许其他账户绑定
+
+        // 🆕 同步清理消息摘要数据
+        try {
+          const digestHelper = require('../utils/messageDigest')
+          const digestKey = digestHelper.getDigestRedisKey(accountId, sessionHash)
+          await redis.getClient().del(digestKey)
+          logger.debug(`🗑️ Cleared digest data: ${digestKey}`)
+        } catch (error) {
+          logger.error(`❌ Failed to clear digest data for ${accountId}:`, error)
+          // 不阻塞主流程
+        }
 
         continue // 跳过此账户
       }
@@ -1688,15 +1700,17 @@ class UnifiedClaudeScheduler {
       logger.info(`📋 Digest validation PASSED: ${validation.action}`)
 
       // 4. 更新摘要
-      const ttl = 7 * 24 * 3600 // 7天
+      const configuredHours = Number(config.session?.stickyTtlHours)
+      const ttlHours = Number.isFinite(configuredHours) && configuredHours > 0 ? configuredHours : 168
+      const ttl = Math.max(60, Math.round(ttlHours * 3600))
       await client.setex(digestKey, ttl, newDigest)
-      logger.debug(`📋 Updated digest in Redis (TTL: 7 days)`)
+      logger.debug(`📋 Updated digest in Redis (TTL: ${ttlHours} hours)`)
 
       return true
     } catch (error) {
       logger.error('❌ Error validating session digest:', error)
-      // 验证过程出错时，保守处理：允许请求通过
-      return true
+      // 验证过程出错：拒绝请求（启用摘要验证就应该严格执行）
+      return false
     }
   }
 }
