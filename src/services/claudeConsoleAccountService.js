@@ -50,6 +50,56 @@ class ClaudeConsoleAccountService {
     return parsed
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120
+    }
+
+    if (!concurrencyControl) {
+      return { ...defaults }
+    }
+
+    let parsed = concurrencyControl
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxConcurrency = coerceNumber(parsed.maxConcurrency, result.maxConcurrency)
+    result.queueSize = coerceNumber(parsed.queueSize, result.queueSize)
+    result.queueTimeout = coerceNumber(parsed.queueTimeout, result.queueTimeout)
+
+    return result
+  }
+
   // 🏢 创建Claude Console账户
   async createAccount(options = {}) {
     const {
@@ -127,14 +177,7 @@ class ClaudeConsoleAccountService {
       exclusiveSessionOnly: exclusiveEnabled.toString(),
       enableMessageDigest: digestEnabled.toString(),
       // 并发控制配置（JSON 对象）
-      concurrencyControl: concurrencyControl
-        ? JSON.stringify({
-            enabled: concurrencyControl.enabled === true,
-            maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
-            queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
-            queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
-          })
-        : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+      concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
     }
 
     const client = redis.getClientSafe()
@@ -406,14 +449,9 @@ class ClaudeConsoleAccountService {
 
       // 🔒 处理并发控制配置
       if (updates.concurrencyControl !== undefined) {
-        updatedData.concurrencyControl = updates.concurrencyControl
-          ? JSON.stringify({
-              enabled: updates.concurrencyControl.enabled === true,
-              maxConcurrency: parseInt(updates.concurrencyControl.maxConcurrency, 10) || 10,
-              queueSize: parseInt(updates.concurrencyControl.queueSize, 10) || 20,
-              queueTimeout: parseInt(updates.concurrencyControl.queueTimeout, 10) || 120
-            })
-          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+        updatedData.concurrencyControl = JSON.stringify(
+          this._normalizeConcurrencyControl(updates.concurrencyControl)
+        )
       }
 
       updatedData.updatedAt = new Date().toISOString()

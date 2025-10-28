@@ -54,6 +54,56 @@ class ClaudeAccountService {
     )
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120
+    }
+
+    if (!concurrencyControl) {
+      return { ...defaults }
+    }
+
+    let parsed = concurrencyControl
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxConcurrency = coerceNumber(parsed.maxConcurrency, result.maxConcurrency)
+    result.queueSize = coerceNumber(parsed.queueSize, result.queueSize)
+    result.queueTimeout = coerceNumber(parsed.queueTimeout, result.queueTimeout)
+
+    return result
+  }
+
   // 🏢 创建Claude账户
   async createAccount(options = {}) {
     const {
@@ -131,14 +181,7 @@ class ClaudeAccountService {
         exclusiveSessionOnly: exclusiveEnabled.toString(),
         enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: concurrencyControl
-          ? JSON.stringify({
-              enabled: concurrencyControl.enabled === true,
-              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
-              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
-              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
-            })
-          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
       }
     } else {
       // 兼容旧格式
@@ -176,14 +219,7 @@ class ClaudeAccountService {
         exclusiveSessionOnly: exclusiveEnabled.toString(),
         enableMessageDigest: digestEnabled.toString(),
         // 并发控制配置（JSON 对象）
-        concurrencyControl: concurrencyControl
-          ? JSON.stringify({
-              enabled: concurrencyControl.enabled === true,
-              maxConcurrency: parseInt(concurrencyControl.maxConcurrency, 10) || 10,
-              queueSize: parseInt(concurrencyControl.queueSize, 10) || 20,
-              queueTimeout: parseInt(concurrencyControl.queueTimeout, 10) || 120
-            })
-          : JSON.stringify({ enabled: false, maxConcurrency: 10, queueSize: 20, queueTimeout: 120 })
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl))
       }
     }
 
@@ -747,19 +783,9 @@ class ClaudeAccountService {
             updatedData.enableMessageDigest = digestFlag.toString()
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
-            updatedData[field] = value
-              ? JSON.stringify({
-                  enabled: value.enabled === true,
-                  maxConcurrency: parseInt(value.maxConcurrency, 10) || 10,
-                  queueSize: parseInt(value.queueSize, 10) || 20,
-                  queueTimeout: parseInt(value.queueTimeout, 10) || 120
-                })
-              : JSON.stringify({
-                  enabled: false,
-                  maxConcurrency: 10,
-                  queueSize: 20,
-                  queueTimeout: 120
-                })
+            updatedData[field] = JSON.stringify(
+              this._normalizeConcurrencyControl(value)
+            )
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }

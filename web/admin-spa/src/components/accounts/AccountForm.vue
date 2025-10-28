@@ -3611,6 +3611,61 @@ const normalizeProxyFormState = (rawProxy) => {
   return createDefaultProxyState()
 }
 
+const coerceNumberOrDefault = (value, fallback) => {
+  if (value === null || value === undefined || value === '') {
+    return fallback
+  }
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+const extractConcurrencyValue = (concurrencyConfig, key, fallback) => {
+  if (!concurrencyConfig) {
+    return fallback
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return fallback
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return fallback
+  }
+
+  return coerceNumberOrDefault(parsed[key], fallback)
+}
+
+const extractConcurrencyEnabled = (concurrencyConfig) => {
+  if (!concurrencyConfig) {
+    return false
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return false
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return false
+  }
+
+  return (
+    parsed.enabled === true ||
+    parsed.enabled === 'true' ||
+    parsed.enabled === 1 ||
+    parsed.enabled === '1'
+  )
+}
+
 const buildProxyPayload = (proxyState) => {
   if (!proxyState || !proxyState.enabled) {
     return null
@@ -3696,54 +3751,10 @@ const form = ref({
   userAgent: props.account?.userAgent || '',
   enableRateLimit: props.account ? props.account.rateLimitDuration > 0 : true,
   // 并发控制字段
-  enableConcurrencyControl: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.enabled === true
-      } catch (e) {
-        return false
-      }
-    }
-    return false
-  })(),
-  maxConcurrency: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.maxConcurrency || 10
-      } catch (e) {
-        return 10
-      }
-    }
-    return 10
-  })(),
-  queueSize: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.queueSize || 20
-      } catch (e) {
-        return 20
-      }
-    }
-    return 20
-  })(),
-  queueTimeout: (() => {
-    const cc = props.account?.concurrencyControl
-    if (cc) {
-      try {
-        const parsed = typeof cc === 'string' ? JSON.parse(cc) : cc
-        return parsed.queueTimeout || 120
-      } catch (e) {
-        return 120
-      }
-    }
-    return 120
-  })(),
+  enableConcurrencyControl: extractConcurrencyEnabled(props.account?.concurrencyControl),
+  maxConcurrency: extractConcurrencyValue(props.account?.concurrencyControl, 'maxConcurrency', 10),
+  queueSize: extractConcurrencyValue(props.account?.concurrencyControl, 'queueSize', 20),
+  queueTimeout: extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
@@ -4272,10 +4283,10 @@ const handleOAuthSuccess = async (tokenInfo) => {
       }
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
       data.enableMessageDigest = form.value.exclusiveSessionOnly
@@ -4587,10 +4598,10 @@ const createAccount = async () => {
       }
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
       }
     } else if (form.value.platform === 'gemini') {
       // Gemini手动模式需要构建geminiOauth对象
@@ -4682,10 +4693,10 @@ const createAccount = async () => {
         : false
       // 添加并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
       }
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
@@ -4969,10 +4980,10 @@ const updateAccount = async () => {
         : false
       // 并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
       }
     }
 
@@ -5007,10 +5018,10 @@ const updateAccount = async () => {
         : false
       // 并发控制配置
       data.concurrencyControl = {
-        enabled: form.value.enableConcurrencyControl || false,
-        maxConcurrency: form.value.maxConcurrency || 10,
-        queueSize: form.value.queueSize || 20,
-        queueTimeout: form.value.queueTimeout || 120
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
       }
     }
 

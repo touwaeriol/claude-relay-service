@@ -123,7 +123,7 @@ class ConcurrencyManager {
 
     // 获取或创建 Semaphore 实例
     const semaphoreInfo = this._getSemaphoreInfo(resourceId, config)
-    const { semaphore } = semaphoreInfo
+    const { semaphore, maxConcurrency: configuredMaxConcurrency } = semaphoreInfo
 
     // 队列计数键
     const queueCountKey = `concurrency:queue:${resourceId}`
@@ -132,22 +132,26 @@ class ConcurrencyManager {
 
     // 1. 入队前先"占位"——控制等待队列长度
     const waiting = await redis.incr(queueCountKey)
+    const currentWaiting = Math.max(waiting - 1, 0)
     // 设置/更新 TTL
     await redis.expire(queueCountKey, queueKeyTtlSeconds)
 
-    if (waiting > queueSize) {
+    const activeCount = semaphoreInfo.activeCount || 0
+    const shouldEnforceQueueLimit = activeCount >= configuredMaxConcurrency
+
+    if (shouldEnforceQueueLimit && waiting > queueSize) {
       // 队列已满，撤销占位
       await this._decrementQueueCount(redis, queueCountKey, queueKeyTtlSeconds)
       this.stats.totalQueueFull++
 
-      logger.warn(`🚫 Queue full for ${resourceId}: ${waiting - 1} waiting, max ${queueSize}`)
+      logger.warn(`🚫 Queue full for ${resourceId}: ${currentWaiting} waiting, max ${queueSize}`)
 
       const error = new Error(
-        `Queue full: ${waiting - 1} requests waiting, maximum queue size is ${queueSize}`
+        `Queue full: ${currentWaiting} requests waiting, maximum queue size is ${queueSize}`
       )
       error.code = 'QUEUE_FULL'
       error.resourceId = resourceId
-      error.currentWaiting = waiting - 1
+      error.currentWaiting = currentWaiting
       error.maxQueueSize = queueSize
       throw error
     }
@@ -159,12 +163,13 @@ class ConcurrencyManager {
 
     try {
       logger.debug(
-        `⏳ Acquiring slot for ${resourceId} (waiting: ${waiting - 1}, timeout: ${queueTimeout > 0 ? `${queueTimeout}s` : 'infinite'})`
+        `⏳ Acquiring slot for ${resourceId} (waiting: ${currentWaiting}, timeout: ${queueTimeout > 0 ? `${queueTimeout}s` : 'infinite'})`
       )
 
       // 使用 redis-semaphore 的 acquire 方法（支持超时）
       await semaphore.acquire()
       acquired = true
+      semaphoreInfo.activeCount = (semaphoreInfo.activeCount || 0) + 1
       this.stats.totalAcquired++
 
       // 获取成功后，减少等待计数
@@ -216,7 +221,13 @@ class ConcurrencyManager {
       if (!released) {
         released = true
         try {
-          await semaphore.release()
+          try {
+            await semaphore.release()
+          } finally {
+            if (semaphoreInfo.activeCount > 0) {
+              semaphoreInfo.activeCount--
+            }
+          }
           this.stats.totalReleased++
           logger.debug(`🔓 Released slot for ${resourceId}`)
         } catch (err) {
@@ -288,7 +299,8 @@ class ConcurrencyManager {
       createdAt: Date.now(),
       maxConcurrency,
       queueSize,
-      queueTimeout
+      queueTimeout,
+      activeCount: 0
     }
 
     this.semaphores.set(resourceId, newSemaphoreInfo)
