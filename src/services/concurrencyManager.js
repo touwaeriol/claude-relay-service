@@ -86,6 +86,48 @@ class ConcurrencyManager {
     }
   }
 
+  _normalizeConfig(config) {
+    const defaults = {
+      enabled: false,
+      maxConcurrency: 1,
+      queueSize: 0,
+      queueTimeout: 1
+    }
+
+    if (!config || typeof config !== 'object') {
+      return { ...defaults }
+    }
+
+    const toNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const normalized = { ...defaults }
+
+    normalized.enabled =
+      config.enabled === true ||
+      config.enabled === 'true' ||
+      config.enabled === 1 ||
+      config.enabled === '1'
+
+    const coercedMaxConcurrency = Math.floor(
+      toNumber(config.maxConcurrency, defaults.maxConcurrency)
+    )
+    normalized.maxConcurrency = coercedMaxConcurrency < 1 ? 1 : coercedMaxConcurrency
+
+    const coercedQueueSize = Math.floor(toNumber(config.queueSize, defaults.queueSize))
+    normalized.queueSize = coercedQueueSize < 0 ? 0 : coercedQueueSize
+
+    const coercedQueueTimeout = Math.floor(toNumber(config.queueTimeout, defaults.queueTimeout))
+    normalized.queueTimeout = coercedQueueTimeout < 1 ? 1 : coercedQueueTimeout
+
+    return normalized
+  }
+
   /**
    * 获取 Redis 客户端（懒加载）
    * @private
@@ -118,7 +160,8 @@ class ConcurrencyManager {
    * @throws {Error} code=TIMEOUT - 等待超时
    */
   async waitForSlot(resourceId, config, req, res) {
-    const { enabled, maxConcurrency, queueSize, queueTimeout } = config
+    const normalizedConfig = this._normalizeConfig(config)
+    const { enabled, maxConcurrency, queueSize } = normalizedConfig
 
     // 验证参数
     if (!resourceId || typeof resourceId !== 'string') {
@@ -140,7 +183,7 @@ class ConcurrencyManager {
 
     if (!limiter) {
       // 首次创建
-      limiter = this._createLimiter(resourceId, config)
+      limiter = this._createLimiter(resourceId, normalizedConfig)
       this.limiters.set(resourceId, limiter)
       this.stats.totalCreated++
 
@@ -149,11 +192,11 @@ class ConcurrencyManager {
       )
     } else {
       // 🔄 动态更新配置（异步、带锁）
-      await this._updateLimiterConfig(limiter, resourceId, config)
+      await this._updateLimiterConfig(limiter, resourceId, normalizedConfig)
     }
 
     // 🎯 获取槽位
-    return await this._acquireSlot(limiter, resourceId, config, req, res)
+    return await this._acquireSlot(limiter, resourceId, normalizedConfig, req, res)
   }
 
   /**
@@ -272,37 +315,147 @@ class ConcurrencyManager {
    */
   async _acquireSlot(limiter, resourceId, config, req, res) {
     const { queueTimeout } = config
-    const timeoutMs = queueTimeout > 0 ? queueTimeout * 1000 : 0
+    const timeoutMs = queueTimeout * 1000
 
-    try {
-      // 包装成 job
-      const job = () => {
-        return new Promise((resolve) => {
-          const release = () => {
-            resolve()
-            this.stats.totalReleased++
-            logger.debug(`🔓 Released slot for ${resourceId}`)
+    let earlyDisconnected = false
+
+    const onEarlyDisconnect = () => {
+      earlyDisconnected = true
+    }
+
+    req.once('close', onEarlyDisconnect)
+    req.once('aborted', onEarlyDisconnect)
+
+    const cleanupEarlyListeners = () => {
+      req.removeListener('close', onEarlyDisconnect)
+      req.removeListener('aborted', onEarlyDisconnect)
+    }
+
+    let acquireResolve
+    let acquireReject
+    let acquireSettled = false
+
+    const acquirePromise = new Promise((resolve, reject) => {
+      acquireResolve = resolve
+      acquireReject = reject
+    })
+
+    const resolveAcquireOnce = (releaseFn) => {
+      if (acquireSettled) {
+        return
+      }
+      acquireSettled = true
+      acquireResolve(releaseFn)
+    }
+
+    const rejectAcquireOnce = (error) => {
+      if (acquireSettled) {
+        return
+      }
+      acquireSettled = true
+      acquireReject(error)
+    }
+
+    const job = () => {
+      return new Promise((resolveJob) => {
+        cleanupEarlyListeners()
+
+        if (earlyDisconnected) {
+          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          logger.info(`🔌 Client disconnected before acquiring slot: ${resourceId}`)
+          resolveJob()
+          rejectAcquireOnce(disconnectError)
+          return
+        }
+
+        let released = false
+
+        const cleanupActiveListeners = () => {
+          req.removeListener('close', handleDisconnect)
+          req.removeListener('aborted', handleDisconnect)
+          res.removeListener('close', handleDisconnect)
+          res.removeListener('finish', handleFinish)
+          res.removeListener('error', handleError)
+        }
+
+        const finalizeRelease = () => {
+          if (released) {
+            return
           }
+          released = true
+          cleanupActiveListeners()
+          resolveJob()
+        }
 
-          // 🎯 自动释放机制
-          req.once('close', release)
-          req.once('aborted', release)
-          res.once('close', release)
-          res.once('finish', release)
-          res.once('error', release)
+        const handleDisconnect = () => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          logger.info(`🔌 Client disconnected while holding slot: ${resourceId}`)
+          this.stats.totalReleased++
+          rejectAcquireOnce(disconnectError)
+        }
 
-          this.stats.totalAcquired++
-          logger.debug(`✅ Acquired slot for ${resourceId}`)
+        const handleError = (err) => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          this.stats.totalReleased++
+          logger.error(`❌ Response stream error while holding slot: ${resourceId}`, err)
+          rejectAcquireOnce(err)
+        }
+
+        const handleFinish = () => {
+          release()
+        }
+
+        const release = () => {
+          if (released) {
+            return
+          }
+          finalizeRelease()
+          this.stats.totalReleased++
+          logger.debug(`🔓 Released slot for ${resourceId}`)
+        }
+
+        req.once('close', handleDisconnect)
+        req.once('aborted', handleDisconnect)
+        res.once('close', handleDisconnect)
+        res.once('finish', handleFinish)
+        res.once('error', handleError)
+
+        this.stats.totalAcquired++
+        logger.debug(`✅ Acquired slot for ${resourceId}`)
+
+        resolveAcquireOnce(() => {
+          release()
         })
+      })
+    }
+
+    const scheduledPromise = limiter.schedule({ expiration: timeoutMs }, job)
+
+    scheduledPromise.catch(async (error) => {
+      cleanupEarlyListeners()
+
+      if (acquireSettled) {
+        return
       }
 
-      // 提交任务（带超时）
-      await limiter.schedule({ expiration: timeoutMs }, job)
+      try {
+        await this._handleAcquireError(error, resourceId, config, limiter)
+      } catch (handledError) {
+        rejectAcquireOnce(handledError)
+        return
+      }
 
-      return () => {} // 已通过事件自动释放
-    } catch (error) {
-      return this._handleAcquireError(error, resourceId, config, limiter)
-    }
+      rejectAcquireOnce(error)
+    })
+
+    return acquirePromise
   }
 
   /**
@@ -344,11 +497,19 @@ class ConcurrencyManager {
       timeoutError.code = 'TIMEOUT'
       timeoutError.resourceId = resourceId
       timeoutError.timeout = config.queueTimeout
+      timeoutError.timeoutMs = config.queueTimeout * 1000
       throw timeoutError
     }
 
     // 其他错误
     throw error
+  }
+
+  _buildClientDisconnectedError(resourceId) {
+    const err = new Error('Client disconnected while waiting for concurrency slot')
+    err.code = 'CLIENT_DISCONNECTED'
+    err.resourceId = resourceId
+    return err
   }
 
   /**

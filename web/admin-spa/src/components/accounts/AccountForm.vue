@@ -1123,12 +1123,12 @@
                     <input
                       v-model.number="form.queueTimeout"
                       class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-                      min="0"
-                      placeholder="默认120秒，0表示永久等待"
+                      min="1"
+                      placeholder="默认120秒，必须大于0"
                       type="number"
                     />
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      请求在队列中等待的最大时间（秒），0 表示永久等待
+                      请求在队列中等待的最大时间（秒），需要大于 0，超过后返回 503
                     </p>
                   </div>
                 </div>
@@ -3754,7 +3754,10 @@ const form = ref({
   enableConcurrencyControl: extractConcurrencyEnabled(props.account?.concurrencyControl),
   maxConcurrency: extractConcurrencyValue(props.account?.concurrencyControl, 'maxConcurrency', 10),
   queueSize: extractConcurrencyValue(props.account?.concurrencyControl, 'queueSize', 20),
-  queueTimeout: extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120),
+  queueTimeout: Math.max(
+    1,
+    extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120)
+  ),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
@@ -4277,7 +4280,7 @@ const handleOAuthSuccess = async (tokenInfo) => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
       data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
       data.enableMessageDigest = form.value.exclusiveSessionOnly
@@ -4592,7 +4595,7 @@ const createAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     } else if (form.value.platform === 'gemini') {
       // Gemini手动模式需要构建geminiOauth对象
@@ -4687,7 +4690,7 @@ const createAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
@@ -4974,7 +4977,7 @@ const updateAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     }
 
@@ -5012,7 +5015,7 @@ const updateAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: coerceNumberOrDefault(form.value.queueTimeout, 120)
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
       }
     }
 
@@ -5816,6 +5819,15 @@ watch(
   (newValue) => {
     if (!newValue && form.value.enableMessageDigest) {
       form.value.enableMessageDigest = false
+    }
+  }
+)
+
+watch(
+  () => form.value.queueTimeout,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== null && newValue <= 0) {
+      form.value.queueTimeout = 1
     }
   }
 )

@@ -83,6 +83,20 @@ class ClaudeConsoleAccountService {
       return Number.isFinite(num) ? num : fallback
     }
 
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const clampNonNegative = (value, min = 0) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
     const result = { ...defaults }
 
     if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
@@ -93,9 +107,9 @@ class ClaudeConsoleAccountService {
         parsed.enabled === '1'
     }
 
-    result.maxConcurrency = coerceNumber(parsed.maxConcurrency, result.maxConcurrency)
-    result.queueSize = coerceNumber(parsed.queueSize, result.queueSize)
-    result.queueTimeout = coerceNumber(parsed.queueTimeout, result.queueTimeout)
+    result.maxConcurrency = clamp(coerceNumber(parsed.maxConcurrency, result.maxConcurrency), 1)
+    result.queueSize = clampNonNegative(coerceNumber(parsed.queueSize, result.queueSize))
+    result.queueTimeout = clamp(coerceNumber(parsed.queueTimeout, result.queueTimeout), 1)
 
     return result
   }
