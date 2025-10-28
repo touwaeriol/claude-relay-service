@@ -84,23 +84,12 @@ class UnifiedClaudeScheduler {
 
       if (!validationResult.valid) {
         logger.warn(
-          `🛑 Exclusive account ${account.name} digest validation failed - clearing binding`
+          `🛑 Exclusive account ${account.name} digest validation failed, rejecting request`
         )
 
-        // 清除粘性会话绑定
-        await redis.delSessionAccountMapping(sessionHash)
-        stickyAccountId = null // 更新局部变量，允许其他账户绑定
-
-        // 🆕 同步清理消息摘要数据
-        try {
-          const digestHelper = require('../utils/messageDigest')
-          const digestKey = digestHelper.getDigestRedisKey(accountId, sessionHash)
-          await redis.getClient().del(digestKey)
-          logger.debug(`🗑️ Cleared digest data: ${digestKey}`)
-        } catch (error) {
-          logger.error(`❌ Failed to clear digest data for ${accountId}:`, error)
-          // 不阻塞主流程
-        }
+        // ⚠️ 不清除绑定关系！不清理摘要数据！
+        // 让 Redis TTL 自动处理过期（绑定和摘要都是7天）
+        // 验证失败时：拒绝请求，跳过该账户
 
         continue // 跳过此账户
       }
@@ -308,6 +297,7 @@ class UnifiedClaudeScheduler {
                 logger.warn(
                   `🛑 Dedicated Claude OAuth account ${boundAccount.name} digest validation failed, falling back to pool`
                 )
+                // ⚠️ 注意：不清理摘要数据！保留摘要可以防止攻击者通过触发验证失败来重置摘要
                 // Fallback到共享池，不抛出错误，继续执行
               } else {
                 logger.info(
@@ -359,6 +349,7 @@ class UnifiedClaudeScheduler {
               logger.warn(
                 `🛑 Dedicated Claude Console account ${boundConsoleAccount.name} digest validation failed, falling back to pool`
               )
+              // ⚠️ 注意：不清理摘要数据！保留摘要可以防止攻击者通过触发验证失败来重置摘要
               // Fallback到共享池，不抛出错误，继续执行
             } else {
               logger.info(
@@ -1700,9 +1691,9 @@ class UnifiedClaudeScheduler {
       logger.info(`📋 Digest validation PASSED: ${validation.action}`)
 
       // 4. 更新摘要
-      const configuredHours = Number(config.session?.stickyTtlHours)
-      const ttlHours = Number.isFinite(configuredHours) && configuredHours > 0 ? configuredHours : 168
-      const ttl = Math.max(60, Math.round(ttlHours * 3600))
+      const rawStickyHours = Number(config.session?.stickyTtlHours)
+      const ttlHours = Number.isFinite(rawStickyHours) && rawStickyHours > 0 ? rawStickyHours : 168
+      const ttl = Math.round(ttlHours * 3600)
       await client.setex(digestKey, ttl, newDigest)
       logger.debug(`📋 Updated digest in Redis (TTL: ${ttlHours} hours)`)
 
