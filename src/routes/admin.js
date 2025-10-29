@@ -143,35 +143,39 @@ async function getConcurrencyStats(account) {
   }
 
   try {
-    // 解析并发控制配置
-    let config
-    try {
-      config = JSON.parse(account.concurrencyControl)
-    } catch (parseError) {
-      logger.warn(
-        `Failed to parse concurrencyControl for account ${account.id}:`,
-        parseError.message
-      )
-      return defaultStats
+    let rawConfig = account.concurrencyControl
+
+    if (typeof rawConfig === 'string') {
+      const trimmed = rawConfig.trim()
+      if (trimmed) {
+        try {
+          rawConfig = JSON.parse(trimmed)
+        } catch (parseError) {
+          logger.warn(
+            `Failed to parse concurrencyControl for account ${account.id}:`,
+            parseError.message
+          )
+          return defaultStats
+        }
+      } else {
+        rawConfig = null
+      }
     }
 
-    // 检查是否启用
-    if (!config.enabled) {
+    const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
+
+    if (!normalized.enabled) {
       return defaultStats
     }
-
-    // 从配置获取最大值
-    const maxQueueSize = config.queueSize || 0
-    const maxConcurrency = config.maxConcurrency || 0
 
     // 从 concurrencyManager 获取实时统计
     const stats = await concurrencyManager.getStats(account.id)
 
     // 返回结果：配置的最大值 + 实时的当前值（如果没有实时统计则为0）
     return {
-      maxQueueSize,
+      maxQueueSize: normalized.queueSize || 0,
       currentWaiting: stats?.waiting || 0,
-      maxConcurrency,
+      maxConcurrency: normalized.maxConcurrency || 0,
       currentRunning: stats?.running || 0
     }
   } catch (error) {
@@ -835,7 +839,9 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
         normalizedConcurrencyConfig = parsedConcurrency.value
       }
     } catch (error) {
-      return res.status(400).json({ error: 'Invalid concurrency configuration', message: error.message })
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
     }
 
     const newKey = await apiKeyService.generateApiKey({

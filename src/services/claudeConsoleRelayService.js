@@ -47,22 +47,20 @@ class ClaudeConsoleRelayService {
       }
 
       // 🔒 并发控制：针对 claude-console 账户（非流式请求）
-      if (account?.concurrencyControl && clientRequest && clientResponse) {
+      const concurrencyConfig = this._resolveConcurrencyConfig(account)
+      if (clientRequest && clientResponse && concurrencyConfig?.enabled) {
         try {
-          const concurrencyConfig = JSON.parse(account.concurrencyControl)
-          if (concurrencyConfig.enabled) {
-            logger.debug(
-              `🔒 [Console NonStream] Concurrency control enabled for ${accountId}, config:`,
-              concurrencyConfig
-            )
-            await concurrencyManager.waitForSlot(
-              accountId,
-              concurrencyConfig,
-              clientRequest,
-              clientResponse
-            )
-            logger.debug(`✅ [Console NonStream] Acquired concurrency slot for ${accountId}`)
-          }
+          logger.debug(
+            `🔒 [Console NonStream] Concurrency control enabled for ${accountId}, config:`,
+            concurrencyConfig
+          )
+          await concurrencyManager.waitForSlot(
+            accountId,
+            concurrencyConfig,
+            clientRequest,
+            clientResponse
+          )
+          logger.debug(`✅ [Console NonStream] Acquired concurrency slot for ${accountId}`)
         } catch (error) {
           if (error.code === 'QUEUE_FULL') {
             logger.warn(
@@ -421,69 +419,70 @@ class ClaudeConsoleRelayService {
       const { clientRequest } = options
       const clientResponse = options.clientResponse || responseStream
 
-      if (account?.concurrencyControl && clientRequest && clientResponse) {
-        try {
-          const concurrencyConfig = JSON.parse(account.concurrencyControl)
-          if (concurrencyConfig.enabled) {
+      if (clientRequest && clientResponse) {
+        const streamConcurrencyConfig = this._resolveConcurrencyConfig(account)
+
+        if (streamConcurrencyConfig?.enabled) {
+          try {
             logger.debug(
               `🔒 [Console Stream] Concurrency control enabled for ${accountId}, config:`,
-              concurrencyConfig
+              streamConcurrencyConfig
             )
             await concurrencyManager.waitForSlot(
               accountId,
-              concurrencyConfig,
+              streamConcurrencyConfig,
               clientRequest,
               clientResponse
             )
             logger.debug(`✅ [Console Stream] Acquired concurrency slot for ${accountId}`)
-          }
-        } catch (error) {
-          if (error.code === 'QUEUE_FULL') {
-            logger.warn(
-              `🚫 [Console Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
-            )
-            // 流式响应：设置状态码和发送错误事件
-            responseStream.writeHead(429, {
-              'Content-Type': 'text/event-stream',
-              'Retry-After': '10'
-            })
-            responseStream.write(
-              `event: error\ndata: ${JSON.stringify({
-                error: 'concurrency_limit_exceeded',
-                message: error.message
-              })}\n\n`
-            )
-            responseStream.end()
-            return
-          } else if (error.code === 'TIMEOUT') {
-            logger.warn(
-              `⏱️ [Console Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
-            )
-            responseStream.writeHead(503, {
-              'Content-Type': 'text/event-stream',
-              'Retry-After': Math.ceil(error.timeout / 2).toString()
-            })
-            responseStream.write(
-              `event: error\ndata: ${JSON.stringify({
-                error: 'concurrency_timeout',
-                message: error.message
-              })}\n\n`
-            )
-            responseStream.end()
-            return
-          } else if (error.code === 'CLIENT_DISCONNECTED') {
-            logger.info(
-              `🔌 [Console Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
-            )
-            // 客户端已断开，直接结束流
-            if (!responseStream.headersSent) {
-              responseStream.writeHead(499, {})
+          } catch (error) {
+            if (error.code === 'QUEUE_FULL') {
+              logger.warn(
+                `🚫 [Console Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+              )
+              // 流式响应：设置状态码和发送错误事件
+              responseStream.writeHead(429, {
+                'Content-Type': 'text/event-stream',
+                'Retry-After': '10'
+              })
+              responseStream.write(
+                `event: error\ndata: ${JSON.stringify({
+                  error: 'concurrency_limit_exceeded',
+                  message: error.message
+                })}\n\n`
+              )
+              responseStream.end()
+              return
+            } else if (error.code === 'TIMEOUT') {
+              logger.warn(
+                `⏱️ [Console Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+              )
+              responseStream.writeHead(503, {
+                'Content-Type': 'text/event-stream',
+                'Retry-After': Math.ceil(error.timeout / 2).toString()
+              })
+              responseStream.write(
+                `event: error\ndata: ${JSON.stringify({
+                  error: 'concurrency_timeout',
+                  message: error.message
+                })}\n\n`
+              )
+              responseStream.end()
+              return
+            } else if (error.code === 'CLIENT_DISCONNECTED') {
+              logger.info(
+                `🔌 [Console Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
+              )
+              // 客户端已断开，直接结束流
+              if (!responseStream.headersSent) {
+                responseStream.writeHead(499, {})
+              }
+              responseStream.end()
+              return
             }
-            responseStream.end()
-            return
+            // 其他错误继续抛出
+            throw error
           }
-          // 其他错误继续抛出
-          throw error
         }
       }
 
@@ -1018,6 +1017,35 @@ class ClaudeConsoleRelayService {
         aborted = true
       })
     })
+  }
+
+  // 🔧 过滤客户端请求头
+  _resolveConcurrencyConfig(account) {
+    if (!account || !account.concurrencyControl) {
+      return null
+    }
+
+    let rawConfig = account.concurrencyControl
+
+    if (typeof rawConfig === 'string') {
+      const trimmed = rawConfig.trim()
+      if (!trimmed) {
+        return null
+      }
+
+      try {
+        rawConfig = JSON.parse(trimmed)
+      } catch (error) {
+        logger.error(
+          `❌ Invalid concurrencyControl JSON for ${account.id || 'unknown account'}:`,
+          error.message
+        )
+        return null
+      }
+    }
+
+    const normalized = concurrencyManager.normalizeConfig(rawConfig)
+    return normalized.enabled ? normalized : null
   }
 
   // 🔧 过滤客户端请求头

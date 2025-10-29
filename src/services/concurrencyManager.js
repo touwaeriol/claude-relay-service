@@ -101,6 +101,20 @@ class ConcurrencyManager {
       queueTimeout: 1
     }
 
+    if (typeof config === 'string') {
+      const trimmed = config.trim()
+      if (trimmed) {
+        try {
+          const parsed = JSON.parse(trimmed)
+          return this._normalizeConfig(parsed)
+        } catch (error) {
+          logger.warn('⚠️ Failed to parse concurrency config string, using defaults:', error)
+          return { ...defaults }
+        }
+      }
+      return { ...defaults }
+    }
+
     if (!config || typeof config !== 'object') {
       return { ...defaults }
     }
@@ -133,6 +147,10 @@ class ConcurrencyManager {
     normalized.queueTimeout = coercedQueueTimeout < 1 ? 1 : coercedQueueTimeout
 
     return normalized
+  }
+
+  normalizeConfig(config) {
+    return this._normalizeConfig(config)
   }
 
   /**

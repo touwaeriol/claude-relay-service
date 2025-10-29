@@ -182,21 +182,9 @@ class ClaudeRelayService {
       }
 
       // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
-      if (
-        (accountType === 'claude-official' || accountType === 'claude-console') &&
-        account?.concurrencyControl
-      ) {
-        // 解析并发控制配置
-        let concurrencyConfig
-        try {
-          concurrencyConfig = JSON.parse(account.concurrencyControl)
-        } catch (parseError) {
-          logger.error(`❌ Invalid concurrencyControl JSON for ${accountId}:`, parseError.message)
-          // JSON 解析失败，跳过并发控制，继续执行
-          concurrencyConfig = null
-        }
+      if (accountType === 'claude-official' || accountType === 'claude-console') {
+        const concurrencyConfig = this._resolveConcurrencyConfig(account)
 
-        // 应用并发控制
         if (concurrencyConfig?.enabled) {
           try {
             logger.debug(
@@ -1332,24 +1320,11 @@ class ClaudeRelayService {
 
       if (
         (accountType === 'claude-official' || accountType === 'claude-console') &&
-        account?.concurrencyControl &&
         clientRequest &&
         clientResponse
       ) {
-        // 解析并发控制配置
-        let concurrencyConfig
-        try {
-          concurrencyConfig = JSON.parse(account.concurrencyControl)
-        } catch (parseError) {
-          logger.error(
-            `❌ [Stream] Invalid concurrencyControl JSON for ${accountId}:`,
-            parseError.message
-          )
-          // JSON 解析失败，跳过并发控制，继续执行
-          concurrencyConfig = null
-        }
+        const concurrencyConfig = this._resolveConcurrencyConfig(account)
 
-        // 应用并发控制
         if (concurrencyConfig?.enabled) {
           try {
             logger.debug(
@@ -2358,6 +2333,34 @@ class ClaudeRelayService {
     }
 
     return 0 // 两个版本号相等
+  }
+
+  _resolveConcurrencyConfig(account) {
+    if (!account || !account.concurrencyControl) {
+      return null
+    }
+
+    let rawConfig = account.concurrencyControl
+
+    if (typeof rawConfig === 'string') {
+      const trimmed = rawConfig.trim()
+      if (!trimmed) {
+        return null
+      }
+
+      try {
+        rawConfig = JSON.parse(trimmed)
+      } catch (error) {
+        logger.error(
+          `❌ Invalid concurrencyControl JSON for ${account.id || 'unknown account'}:`,
+          error.message
+        )
+        return null
+      }
+    }
+
+    const normalized = concurrencyManager.normalizeConfig(rawConfig)
+    return normalized.enabled ? normalized : null
   }
 
   // 🎯 健康检查
