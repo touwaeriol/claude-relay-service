@@ -4,7 +4,10 @@ const logger = require('../utils/logger')
 const config = require('../../config/config')
 const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
-const { checkAccountSessionLimit } = require('../utils/sessionConcurrencyHelper')
+const {
+  checkAccountSessionLimit,
+  checkApiKeySessionLimit
+} = require('../utils/sessionConcurrencyHelper')
 const {
   sanitizeUpstreamError,
   sanitizeErrorMessage,
@@ -37,7 +40,16 @@ class ClaudeConsoleRelayService {
         throw new Error('Claude Console Claude account not found')
       }
 
-      // 🔐 会话并发控制检查
+      // 🔐 API Key 会话并发控制检查
+      const apiKeySessionCheck = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash
+      })
+      if (!apiKeySessionCheck.allowed) {
+        return apiKeySessionCheck.error
+      }
+
+      // 🔐 会话并发控制检查（账号级）
       const sessionLimitCheck = await checkAccountSessionLimit({
         account,
         sessionHash
@@ -403,7 +415,18 @@ class ClaudeConsoleRelayService {
         throw new Error('Claude Console Claude account not found')
       }
 
-      // 🔐 会话并发控制检查（流式请求）
+      // 🔐 API Key 会话并发控制检查（流式请求）
+      const apiKeySessionLimitStream = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!apiKeySessionLimitStream.allowed) {
+        return
+      }
+
+      // 🔐 会话并发控制检查（账号级，流式请求）
       const sessionLimitCheckStream = await checkAccountSessionLimit({
         account,
         sessionHash,

@@ -22,7 +22,7 @@ const appConfig = require('../../config/config')
  *   enabled: true,
  *   maxConcurrency: 10,
  *   queueSize: 20,
- *   queueTimeout: 60  // 秒
+ *   queueTimeout: 120 // 秒
  * };
  *
  * try {
@@ -94,11 +94,14 @@ class ConcurrencyManager {
   }
 
   _normalizeConfig(config) {
+    const configDefaults = (appConfig?.defaults && appConfig.defaults.concurrency) || {}
     const defaults = {
       enabled: false,
-      maxConcurrency: 1,
-      queueSize: 0,
-      queueTimeout: 1
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120,
+      targetServices: [],
+      ...configDefaults
     }
 
     if (typeof config === 'string') {
@@ -145,6 +148,20 @@ class ConcurrencyManager {
 
     const coercedQueueTimeout = Math.floor(toNumber(config.queueTimeout, defaults.queueTimeout))
     normalized.queueTimeout = coercedQueueTimeout < 1 ? 1 : coercedQueueTimeout
+
+    // 处理 targetServices 字段
+    const validServices = ['claude', 'gemini', 'openai', 'droid']
+    if (Array.isArray(config.targetServices)) {
+      normalized.targetServices = [
+        ...new Set(
+          config.targetServices
+            .map((s) => (typeof s === 'string' ? s.toLowerCase().trim() : null))
+            .filter((s) => s && validServices.includes(s))
+        )
+      ]
+    } else {
+      normalized.targetServices = defaults.targetServices
+    }
 
     return normalized
   }

@@ -13,6 +13,9 @@
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           限制时间窗口内的唯一会话数量，防止会话过载
         </p>
+        <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          会话并发仅对 Claude API 生效，其它入口将忽略此限制
+        </p>
 
         <!-- 展开的配置区域 -->
         <div

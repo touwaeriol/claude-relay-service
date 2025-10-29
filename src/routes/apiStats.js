@@ -6,6 +6,7 @@ const CostCalculator = require('../utils/costCalculator')
 const claudeAccountService = require('../services/claudeAccountService')
 const openaiAccountService = require('../services/openaiAccountService')
 const concurrencyManager = require('../services/concurrencyManager')
+const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
 
 const router = express.Router()
 
@@ -136,28 +137,9 @@ router.post('/api/user-stats', async (req, res) => {
         allowedClients = []
       }
 
-      let concurrencyConfig
-      if (keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'string') {
-        try {
-          concurrencyConfig = JSON.parse(keyData.concurrencyConfig)
-        } catch (e) {
-          concurrencyConfig = {
-            enabled: false,
-            maxConcurrency: 1,
-            queueSize: 0,
-            queueTimeout: 60
-          }
-        }
-      } else if (keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'object') {
-        concurrencyConfig = keyData.concurrencyConfig
-      } else {
-        concurrencyConfig = {
-          enabled: false,
-          maxConcurrency: 1,
-          queueSize: 0,
-          queueTimeout: 60
-        }
-      }
+      const concurrencyConfig = concurrencyManager.normalizeConfig(
+        keyData.concurrencyConfig
+      )
 
       const derivedConcurrencyLimit = concurrencyConfig.enabled
         ? concurrencyConfig.maxConcurrency
@@ -230,15 +212,9 @@ router.post('/api/user-stats', async (req, res) => {
     // 获取验证结果中的完整keyData（包含isActive状态和cost信息）
     const fullKeyData = keyData
 
-    const concurrencyConfig =
-      fullKeyData.concurrencyConfig && typeof fullKeyData.concurrencyConfig === 'object'
-        ? fullKeyData.concurrencyConfig
-        : {
-            enabled: false,
-            maxConcurrency: 1,
-            queueSize: 0,
-            queueTimeout: 60
-          }
+    const concurrencyConfig = concurrencyManager.normalizeConfig(
+      fullKeyData.concurrencyConfig
+    )
 
     const derivedConcurrencyLimit = concurrencyConfig.enabled
       ? concurrencyConfig.maxConcurrency
@@ -428,6 +404,31 @@ router.post('/api/user-stats', async (req, res) => {
       await Promise.allSettled(accountDetailTasks)
     }
 
+    const sessionConcurrencyConfig = fullKeyData.sessionConcurrencyConfig || {
+      enabled: false,
+      maxSessions: 0,
+      windowSeconds: 0
+    }
+
+    let currentSessions = 0
+    let sessionTtl = 0
+    if (sessionConcurrencyConfig.enabled) {
+      try {
+        const sessionStats = await sessionConcurrencyManager.getAccountStats(
+          `apikey:${keyId}`
+        )
+        if (sessionStats) {
+          currentSessions = sessionStats.current || 0
+          sessionTtl = sessionStats.ttl || 0
+        }
+      } catch (error) {
+        logger.warn(
+          `⚠️ Failed to get session concurrency stats for API key ${keyId}:`,
+          error.message
+        )
+      }
+    }
+
     // 构建响应数据（只返回该API Key自己的信息，确保不泄露其他信息）
     const responseData = {
       id: keyId,
@@ -465,9 +466,13 @@ router.post('/api/user-stats', async (req, res) => {
         tokenLimit: fullKeyData.tokenLimit || 0,
         concurrencyLimit: derivedConcurrencyLimit,
         concurrencyConfig,
-        sessionEnabled: false,
-        maxSessions: 0,
-        currentSessions: 0,
+        sessionEnabled: sessionConcurrencyConfig.enabled,
+        maxSessions: sessionConcurrencyConfig.enabled ? sessionConcurrencyConfig.maxSessions : 0,
+        currentSessions: sessionConcurrencyConfig.enabled ? currentSessions : 0,
+        sessionWindowSeconds: sessionConcurrencyConfig.enabled
+          ? sessionConcurrencyConfig.windowSeconds
+          : 0,
+        sessionTtl,
         maxQueueSize: concurrencyConfig.enabled ? concurrencyConfig.queueSize || 0 : 0,
         currentWaiting: currentConcurrencyQueue,
         maxConcurrency: concurrencyConfig.enabled ? concurrencyConfig.maxConcurrency || 0 : 0,

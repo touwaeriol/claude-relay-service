@@ -14,6 +14,56 @@ const FALLBACK_CONCURRENCY_CONFIG = {
   cleanupGraceSeconds: 30
 }
 
+/**
+ * 检测请求的服务类型（claude/gemini/openai/droid）
+ * @param {object} req - Express 请求对象
+ * @returns {string} 服务类型
+ */
+function detectServiceType(req) {
+  const baseUrl = req.baseUrl || ''
+  const originalUrl = req.originalUrl || ''
+
+  // 1. 根据 baseUrl 或 originalUrl 判断入口
+  if (baseUrl.includes('/gemini') || originalUrl.includes('/gemini')) {
+    return 'gemini'
+  }
+  if (baseUrl.includes('/droid') || originalUrl.includes('/droid')) {
+    return 'droid'
+  }
+  if (baseUrl.includes('/azure') || originalUrl.includes('/azure')) {
+    return 'openai'
+  }
+  if (baseUrl.includes('/openai') || originalUrl.includes('/openai')) {
+    return 'openai'
+  }
+  if (baseUrl.includes('/claude') || baseUrl.includes('/api')) {
+    return 'claude'
+  }
+
+  // 2. 对于统一入口（如 /api/v1/chat/completions），检查 model 字段
+  const model = req.body?.model
+  if (model && typeof model === 'string') {
+    const lowerModel = model.toLowerCase()
+
+    // 优先根据模型前缀判断
+    if (lowerModel.startsWith('gemini-') || lowerModel.includes('gemini')) {
+      return 'gemini'
+    }
+    if (lowerModel.startsWith('gpt-') || lowerModel.startsWith('o1-') || lowerModel.includes('openai')) {
+      return 'openai'
+    }
+    if (lowerModel.startsWith('claude-') || lowerModel.includes('claude')) {
+      return 'claude'
+    }
+    if (lowerModel.includes('droid')) {
+      return 'droid'
+    }
+  }
+
+  // 3. 默认返回 claude 以保持向后兼容
+  return 'claude'
+}
+
 const resolveConcurrencyConfig = () => {
   if (typeof redis._getConcurrencyConfig === 'function') {
     return redis._getConcurrencyConfig()
@@ -203,72 +253,85 @@ const authenticateApiKey = async (req, res, next) => {
     }
 
     // 🔧 检查并发限制（使用 ConcurrencyManager）
-    const concurrencyConfig = validation.keyData.concurrencyConfig || {
-      enabled: false,
-      maxConcurrency: 1,
-      queueSize: 0,
-      queueTimeout: 60
-    }
+    const concurrencyConfig = concurrencyManager.normalizeConfig(
+      validation.keyData.concurrencyConfig || config.defaults.concurrency
+    )
 
     if (!skipKeyRestrictions && concurrencyConfig.enabled) {
-      const resourceId = `apikey:${validation.keyData.id}`
+      // 检查 targetServices 配置：若非空数组，则只对指定服务入口应用并发限制
+      const targetServices = concurrencyConfig.targetServices || []
+      let shouldApplyConcurrency = true
 
-      try {
-        const release = await concurrencyManager.waitForSlot(
-          resourceId,
-          concurrencyConfig,
-          req,
-          res
-        )
-
-        // 存储 release 函数到请求对象（虽然自动释放，但保留以防需要手动释放）
-        req.concurrencyInfo = {
-          apiKeyId: validation.keyData.id,
-          apiKeyName: validation.keyData.name,
-          resourceId,
-          release
+      if (targetServices.length > 0) {
+        const serviceType = detectServiceType(req)
+        if (!targetServices.includes(serviceType)) {
+          shouldApplyConcurrency = false
+          logger.api(
+            `⏭️ Skipping concurrency control for key: ${validation.keyData.id} (${validation.keyData.name}), service type: ${serviceType}, target services: [${targetServices.join(', ')}]`
+          )
         }
+      }
 
-        logger.api(
-          `✅ Concurrency slot acquired for key: ${validation.keyData.id} (${validation.keyData.name})`
-        )
-      } catch (error) {
-        // 处理并发控制错误
-        if (error.code === 'QUEUE_FULL') {
-          logger.security(
-            `🚫 Queue full for key: ${validation.keyData.id} (${validation.keyData.name}), waiting: ${error.currentWaiting}, max: ${error.maxQueueSize}`
+      if (shouldApplyConcurrency) {
+        const resourceId = `apikey:${validation.keyData.id}`
+
+        try {
+          const release = await concurrencyManager.waitForSlot(
+            resourceId,
+            concurrencyConfig,
+            req,
+            res
           )
-          return res.status(429).json({
-            error: 'Concurrency limit exceeded',
-            message: `Queue is full. ${error.currentWaiting} requests waiting, maximum queue size is ${error.maxQueueSize}`,
-            currentWaiting: error.currentWaiting,
-            maxQueueSize: error.maxQueueSize,
-            maxConcurrency: concurrencyConfig.maxConcurrency
-          })
-        } else if (error.code === 'TIMEOUT') {
-          logger.warn(
-            `⏱️ Concurrency timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
+
+          // 存储 release 函数到请求对象（虽然自动释放，但保留以防需要手动释放）
+          req.concurrencyInfo = {
+            apiKeyId: validation.keyData.id,
+            apiKeyName: validation.keyData.name,
+            resourceId,
+            release
+          }
+
+          logger.api(
+            `✅ Concurrency slot acquired for key: ${validation.keyData.id} (${validation.keyData.name})`
           )
-          return res.status(503).json({
-            error: 'Request timeout',
-            message: `Request timed out waiting for available concurrency slot after ${error.timeout}s`,
-            timeout: error.timeout,
-            maxConcurrency: concurrencyConfig.maxConcurrency,
-            queueSize: concurrencyConfig.queueSize
-          })
-        } else if (error.code === 'CLIENT_DISCONNECTED') {
-          logger.info(
-            `🔌 Client disconnected for key: ${validation.keyData.id} (${validation.keyData.name})`
-          )
-          // 客户端断开连接，无需返回响应
-          return
-        } else {
-          // 其他未知错误
-          logger.error(`❌ Concurrency control error for key ${validation.keyData.id}:`, error)
-          return res.status(500).json({
-            error: 'Concurrency control error',
-            message: 'Failed to acquire concurrency slot'
-          })
+        } catch (error) {
+          // 处理并发控制错误
+          if (error.code === 'QUEUE_FULL') {
+            logger.security(
+              `🚫 Queue full for key: ${validation.keyData.id} (${validation.keyData.name}), waiting: ${error.currentWaiting}, max: ${error.maxQueueSize}`
+            )
+            return res.status(429).json({
+              error: 'Concurrency limit exceeded',
+              message: `Queue is full. ${error.currentWaiting} requests waiting, maximum queue size is ${error.maxQueueSize}`,
+              currentWaiting: error.currentWaiting,
+              maxQueueSize: error.maxQueueSize,
+              maxConcurrency: concurrencyConfig.maxConcurrency
+            })
+          } else if (error.code === 'TIMEOUT') {
+            logger.warn(
+              `⏱️ Concurrency timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
+            )
+            return res.status(503).json({
+              error: 'Request timeout',
+              message: `Request timed out waiting for available concurrency slot after ${error.timeout}s`,
+              timeout: error.timeout,
+              maxConcurrency: concurrencyConfig.maxConcurrency,
+              queueSize: concurrencyConfig.queueSize
+            })
+          } else if (error.code === 'CLIENT_DISCONNECTED') {
+            logger.info(
+              `🔌 Client disconnected for key: ${validation.keyData.id} (${validation.keyData.name})`
+            )
+            // 客户端断开连接，无需返回响应
+            return
+          } else {
+            // 其他未知错误
+            logger.error(`❌ Concurrency control error for key ${validation.keyData.id}:`, error)
+            return res.status(500).json({
+              error: 'Concurrency control error',
+              message: 'Failed to acquire concurrency slot'
+            })
+          }
         }
       }
     }
@@ -516,6 +579,7 @@ const authenticateApiKey = async (req, res, next) => {
       droidAccountId: validation.keyData.droidAccountId,
       permissions: validation.keyData.permissions,
       concurrencyConfig: validation.keyData.concurrencyConfig,
+      sessionConcurrencyConfig: validation.keyData.sessionConcurrencyConfig,
       rateLimitWindow: validation.keyData.rateLimitWindow,
       rateLimitRequests: validation.keyData.rateLimitRequests,
       rateLimitCost: validation.keyData.rateLimitCost, // 新增：费用限制

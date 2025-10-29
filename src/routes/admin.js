@@ -12,6 +12,9 @@ const azureOpenaiAccountService = require('../services/azureOpenaiAccountService
 const accountGroupService = require('../services/accountGroupService')
 const concurrencyManager = require('../services/concurrencyManager')
 const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
+const {
+  normalizeConfig: normalizeSessionConcurrencyConfig
+} = require('../utils/sessionConcurrencyConfigHelper')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -70,6 +73,33 @@ function parseConcurrencyConfigPayload(source = {}) {
   }
 
   const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
+  return { provided: true, value: normalized }
+}
+
+function parseSessionConcurrencyConfigPayload(source = {}) {
+  if (!('sessionConcurrencyConfig' in source)) {
+    return { provided: false, value: null }
+  }
+
+  let rawConfig = source.sessionConcurrencyConfig
+
+  if (typeof rawConfig === 'string' && rawConfig.trim() !== '') {
+    try {
+      rawConfig = JSON.parse(rawConfig)
+    } catch (error) {
+      throw new Error('Invalid sessionConcurrencyConfig JSON')
+    }
+  }
+
+  if (rawConfig === '' || rawConfig === null || rawConfig === undefined) {
+    rawConfig = null
+  }
+
+  if (rawConfig !== null && rawConfig !== undefined && typeof rawConfig !== 'object') {
+    throw new Error('sessionConcurrencyConfig must be an object')
+  }
+
+  const normalized = normalizeSessionConcurrencyConfig(rawConfig || {})
   return { provided: true, value: normalized }
 }
 
@@ -894,6 +924,20 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
         .json({ error: 'Invalid concurrency configuration', message: error.message })
     }
 
+    let normalizedSessionConcurrencyConfig = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      if (parsedSessionConcurrency.provided) {
+        normalizedSessionConcurrencyConfig = parsedSessionConcurrency.value
+      }
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid session concurrency configuration', message: error.message })
+    }
+
     const newKey = await apiKeyService.generateApiKey({
       name,
       description,
@@ -907,6 +951,7 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       droidAccountId,
       permissions,
       concurrencyConfig: normalizedConcurrencyConfig,
+      sessionConcurrencyConfig: normalizedSessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -1006,6 +1051,21 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
       })
     }
 
+    let normalizedSessionConcurrencyConfig = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      if (parsedSessionConcurrency.provided) {
+        normalizedSessionConcurrencyConfig = parsedSessionConcurrency.value
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
+    }
+
     const createdKeys = []
     const errors = []
 
@@ -1025,6 +1085,7 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
           droidAccountId,
           permissions,
           concurrencyConfig: normalizedConcurrencyConfig,
+          sessionConcurrencyConfig: normalizedSessionConcurrencyConfig,
           rateLimitWindow,
           rateLimitRequests,
           rateLimitCost,
@@ -1126,6 +1187,21 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         .json({ error: 'Invalid concurrency configuration', message: error.message })
     }
 
+    let batchSessionConcurrencyProvided = false
+    let batchSessionConcurrencyPayload = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload(updates)
+      batchSessionConcurrencyProvided = parsedSessionConcurrency.provided
+      batchSessionConcurrencyPayload = parsedSessionConcurrency.value
+    } catch (error) {
+      return res
+        .status(400)
+        .json({
+          error: 'Invalid session concurrency configuration',
+          message: error.message
+        })
+    }
+
     logger.info(
       `🔄 Admin batch editing ${keyIds.length} API keys with updates: ${JSON.stringify(updates)}`
     )
@@ -1164,6 +1240,9 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         if (batchConcurrencyProvided) {
           finalUpdates.concurrencyConfig = batchConcurrencyPayload
         }
+        if (batchSessionConcurrencyProvided) {
+          finalUpdates.sessionConcurrencyConfig = batchSessionConcurrencyPayload
+        }
         if (updates.rateLimitWindow !== undefined) {
           finalUpdates.rateLimitWindow = updates.rateLimitWindow
         }
@@ -1193,6 +1272,9 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         }
         if (updates.enabled !== undefined) {
           finalUpdates.enabled = updates.enabled
+        }
+        if (!batchSessionConcurrencyProvided && updates.sessionConcurrencyConfig !== undefined) {
+          finalUpdates.sessionConcurrencyConfig = updates.sessionConcurrencyConfig
         }
 
         // 处理账户绑定
@@ -1291,6 +1373,7 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       name, // 添加名称字段
       tokenLimit,
       concurrencyConfig,
+      sessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -1374,6 +1457,25 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
 
     if (concurrencyUpdateProvided) {
       updates.concurrencyConfig = concurrencyUpdatePayload
+    }
+
+    let sessionConcurrencyUpdateProvided = false
+    let sessionConcurrencyUpdatePayload = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      sessionConcurrencyUpdateProvided = parsedSessionConcurrency.provided
+      sessionConcurrencyUpdatePayload = parsedSessionConcurrency.value
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
+    }
+
+    if (sessionConcurrencyUpdateProvided) {
+      updates.sessionConcurrencyConfig = sessionConcurrencyUpdatePayload
     }
 
     if (claudeAccountId !== undefined) {

@@ -7,7 +7,10 @@ const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
-const { checkAccountSessionLimit } = require('../utils/sessionConcurrencyHelper')
+const {
+  checkAccountSessionLimit,
+  checkApiKeySessionLimit
+} = require('../utils/sessionConcurrencyHelper')
 const {
   buildSessionContext,
   registerSessionForAccount,
@@ -134,7 +137,6 @@ class ClaudeRelayService {
         )
       }
 
-      await registerSessionForAccount(accountSelection, sessionContext)
     } catch (error) {
       if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
         const err = new Error(error.message)
@@ -172,7 +174,16 @@ class ClaudeRelayService {
         account = await claudeAccountService.getAccount(accountId)
       }
 
-      // 🔐 会话并发控制检查
+      // 🔐 API Key 会话并发控制检查
+      const apiKeySessionCheck = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash
+      })
+      if (!apiKeySessionCheck.allowed) {
+        return apiKeySessionCheck.error
+      }
+
+      // 🔐 会话并发控制检查（账号级）
       const sessionLimitCheck = await checkAccountSessionLimit({
         account,
         sessionHash
@@ -249,6 +260,8 @@ class ClaudeRelayService {
           }
         }
       }
+
+      await registerSessionForAccount(accountSelection, sessionContext)
 
       const isDedicatedOfficialAccount =
         accountType === 'claude-official' &&
@@ -1260,8 +1273,6 @@ class ClaudeRelayService {
             { sessionContext }
           )
         }
-
-        await registerSessionForAccount(accountSelection, sessionContext)
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
@@ -1302,7 +1313,18 @@ class ClaudeRelayService {
         account = await claudeAccountService.getAccount(accountId)
       }
 
-      // 🔐 会话并发控制检查（流式请求）
+      // 🔐 API Key 会话并发控制检查（流式请求）
+      const apiKeySessionLimitStream = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!apiKeySessionLimitStream.allowed) {
+        return
+      }
+
+      // 🔐 会话并发控制检查（账号级，流式请求）
       const sessionLimitCheckStream = await checkAccountSessionLimit({
         account,
         sessionHash,
@@ -1388,6 +1410,8 @@ class ClaudeRelayService {
           }
         }
       }
+
+      await registerSessionForAccount(accountSelection, sessionContext)
 
       const isDedicatedOfficialAccount =
         accountType === 'claude-official' &&

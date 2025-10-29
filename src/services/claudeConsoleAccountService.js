@@ -5,6 +5,7 @@ const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 const LRUCache = require('../utils/lruCache')
+const concurrencyManager = require('./concurrencyManager')
 
 class ClaudeConsoleAccountService {
   constructor() {
@@ -51,74 +52,16 @@ class ClaudeConsoleAccountService {
   }
 
   _normalizeConcurrencyControl(concurrencyControl) {
-    const defaults = {
-      enabled: false,
-      maxConcurrency: 10,
-      queueSize: 20,
-      queueTimeout: 120
-    }
-
-    if (!concurrencyControl) {
-      return { ...defaults }
-    }
-
-    let parsed = concurrencyControl
-    if (typeof parsed === 'string') {
-      try {
-        parsed = JSON.parse(parsed)
-      } catch (error) {
-        return { ...defaults }
-      }
-    }
-
-    if (!parsed || typeof parsed !== 'object') {
-      return { ...defaults }
-    }
-
-    const coerceNumber = (value, fallback) => {
-      if (value === null || value === undefined || value === '') {
-        return fallback
-      }
-      const num = Number(value)
-      return Number.isFinite(num) ? num : fallback
-    }
-
-    const clamp = (value, min) => {
-      if (!Number.isFinite(value)) {
-        return min
-      }
-      return value < min ? min : value
-    }
-
-    const clampNonNegative = (value, min = 0) => {
-      if (!Number.isFinite(value)) {
-        return min
-      }
-      return value < min ? min : value
-    }
-
-    const result = { ...defaults }
-
-    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
-      result.enabled =
-        parsed.enabled === true ||
-        parsed.enabled === 'true' ||
-        parsed.enabled === 1 ||
-        parsed.enabled === '1'
-    }
-
-    result.maxConcurrency = clamp(coerceNumber(parsed.maxConcurrency, result.maxConcurrency), 1)
-    result.queueSize = clampNonNegative(coerceNumber(parsed.queueSize, result.queueSize))
-    result.queueTimeout = clamp(coerceNumber(parsed.queueTimeout, result.queueTimeout), 1)
-
-    return result
+    return concurrencyManager.normalizeConfig(concurrencyControl)
   }
 
   _normalizeSessionConcurrencyConfig(sessionConcurrencyConfig) {
+    const configDefaults = (config?.defaults && config.defaults.sessionConcurrency) || {}
     const defaults = {
       enabled: false,
       maxSessions: 10,
-      windowSeconds: 3600 // 1小时
+      windowSeconds: 3600,
+      ...configDefaults
     }
 
     if (!sessionConcurrencyConfig) {

@@ -159,6 +159,99 @@ async function checkAccountSessionLimit(options) {
   }
 }
 
+async function checkApiKeySessionLimit(options) {
+  const { apiKeyData, sessionHash, isStreaming = false, responseStream = null } = options
+
+  if (!sessionHash || !apiKeyData?.sessionConcurrencyConfig) {
+    return { allowed: true }
+  }
+
+  try {
+    const normalizedConfig = normalizeConfig(apiKeyData.sessionConcurrencyConfig)
+
+    if (!normalizedConfig.enabled) {
+      logger.debug(`🔓 [SessionConcurrency] Disabled for API key ${apiKeyData.id}`)
+      return { allowed: true }
+    }
+
+    logger.debug(
+      `🔐 [SessionConcurrency][APIKey]${isStreaming ? '[Stream]' : ''} Checking session limit for ${apiKeyData.id}`,
+      normalizedConfig
+    )
+
+    const sessionCheck = await sessionConcurrencyManager.checkSessionLimit(
+      `apikey:${apiKeyData.id}`,
+      sessionHash,
+      normalizedConfig
+    )
+
+    if (sessionCheck.allowed) {
+      logger.debug(
+        `✅ [SessionConcurrency][APIKey]${isStreaming ? '[Stream]' : ''} Session check passed for ${apiKeyData.id}`
+      )
+      return { allowed: true }
+    }
+
+    logger.warn(
+      `🚫 [SessionConcurrency][APIKey]${isStreaming ? '[Stream]' : ''} Session limit exceeded for ${apiKeyData.id}: ${sessionCheck.error.message}`
+    )
+
+    const errorResponse = {
+      error: sessionCheck.error.code,
+      message: sessionCheck.error.message,
+      details: sessionCheck.error.details
+    }
+
+    if (isStreaming && responseStream) {
+      responseStream.writeHead(429, {
+        'Content-Type': 'text/event-stream',
+        'Retry-After': '5'
+      })
+      responseStream.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`)
+      responseStream.end()
+      return { allowed: false, streamHandled: true }
+    }
+
+    return {
+      allowed: false,
+      error: {
+        statusCode: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '5'
+        },
+        body: JSON.stringify(errorResponse),
+        apiKeyId: apiKeyData.id
+      }
+    }
+  } catch (error) {
+    if (error.code === 'SESSION_LIMIT_EXCEEDED') {
+      logger.error(
+        `❌ [SessionConcurrency][APIKey] Unexpected SESSION_LIMIT_EXCEEDED error:`,
+        error.message
+      )
+      return {
+        allowed: false,
+        error: {
+          statusCode: 429,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '5' },
+          body: JSON.stringify({
+            error: error.code,
+            message: error.message,
+            details: error.details
+          })
+        }
+      }
+    }
+
+    logger.error(
+      `❌ [SessionConcurrency][APIKey]${isStreaming ? '[Stream]' : ''} Check failed for ${apiKeyData.id}:`,
+      error
+    )
+    return { allowed: true }
+  }
+}
+
 /**
  * 获取账户的会话统计信息（便捷函数）
  * @param {string} accountId - 账户ID
@@ -189,6 +282,7 @@ async function clearAccountSessions(accountId) {
 
 module.exports = {
   checkAccountSessionLimit,
+  checkApiKeySessionLimit,
   getAccountSessionStats,
   removeAccountSession,
   clearAccountSessions

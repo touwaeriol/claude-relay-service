@@ -194,9 +194,7 @@
                 </div>
               </div>
 
-              <template
-                v-if="concurrencyConfig.enabled || concurrencyDetails.sessionEnabled"
-              >
+              <template v-if="concurrencyConfig.enabled || concurrencyDetails.sessionEnabled">
                 <div
                   class="space-y-2 rounded-lg border border-purple-200/70 bg-white/60 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
                 >
@@ -212,7 +210,9 @@
                           : 'text-gray-400 dark:text-gray-600'
                       "
                     >
-                      {{ concurrencyDetails.sessionEnabled ? concurrencyDetails.maxSessions : '--' }}
+                      {{
+                        concurrencyDetails.sessionEnabled ? concurrencyDetails.maxSessions : '--'
+                      }}
                     </span>
                     <span class="text-gray-400">/</span>
                     <span
@@ -225,7 +225,7 @@
                     >
                       {{
                         concurrencyDetails.sessionEnabled
-                          ? concurrencyDetails.currentSessions ?? 0
+                          ? (concurrencyDetails.currentSessions ?? 0)
                           : '--'
                       }}
                     </span>
@@ -246,8 +246,7 @@
                     <span class="text-gray-400">/</span>
                     <span
                       :class="
-                        concurrencyDetails.enabled &&
-                        (concurrencyDetails.currentWaiting ?? 0) > 0
+                        concurrencyDetails.enabled && (concurrencyDetails.currentWaiting ?? 0) > 0
                           ? 'text-orange-600 dark:text-orange-300'
                           : 'text-gray-400 dark:text-gray-600'
                       "
@@ -275,8 +274,7 @@
                     <span class="text-gray-400">/</span>
                     <span
                       :class="
-                        concurrencyDetails.enabled &&
-                        (concurrencyDetails.currentRunning ?? 0) > 0
+                        concurrencyDetails.enabled && (concurrencyDetails.currentRunning ?? 0) > 0
                           ? 'text-purple-600 dark:text-purple-300'
                           : 'text-gray-400 dark:text-gray-600'
                       "
@@ -288,7 +286,9 @@
                       }}
                     </span>
                   </div>
-                  <div class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+                  <div
+                    class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400"
+                  >
                     <span>会话/活跃</span>
                     <span>队列/等待</span>
                     <span>并发/运行</span>
@@ -384,17 +384,17 @@ const concurrencyConfig = computed(() => {
 
     return {
       enabled: !!raw.enabled,
-      maxConcurrency: Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : 1,
-      queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? queueSize : 0,
-      queueTimeout: Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 60
+      maxConcurrency: Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : 10,
+      queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? queueSize : 20,
+      queueTimeout: Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 120
     }
   }
 
   return {
     enabled: false,
-    maxConcurrency: 1,
-    queueSize: 0,
-    queueTimeout: 60
+    maxConcurrency: 10,
+    queueSize: 20,
+    queueTimeout: 120
   }
 })
 

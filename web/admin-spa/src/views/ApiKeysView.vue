@@ -658,8 +658,8 @@
                           </div>
                         </div>
                         <template
-                          v-for="concurrency in [getConcurrencyDisplay(key)]"
-                          :key="`key-concurrency-${key.id}`"
+                          v-for="(concurrency, concurrencyIndex) in [getConcurrencyDisplay(key)]"
+                          :key="`key-concurrency-${key.id}-${concurrencyIndex}`"
                         >
                           <div
                             class="mt-2 rounded-lg border border-sky-200/70 bg-sky-50/80 p-2 text-xs dark:border-sky-500/40 dark:bg-sky-900/20"
@@ -687,14 +687,15 @@
                               <span class="text-gray-400">/</span>
                               <span
                                 :class="
-                                  concurrency.sessionEnabled && (concurrency.currentSessions ?? 0) > 0
+                                  concurrency.sessionEnabled &&
+                                  (concurrency.currentSessions ?? 0) > 0
                                     ? 'text-sky-500 dark:text-sky-200'
                                     : 'text-gray-400 dark:text-gray-600'
                                 "
                               >
                                 {{
                                   concurrency.sessionEnabled
-                                    ? concurrency.currentSessions ?? 0
+                                    ? (concurrency.currentSessions ?? 0)
                                     : '--'
                                 }}
                               </span>
@@ -755,23 +756,23 @@
                                 }}
                               </span>
                             </div>
-                          <div
-                            class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
-                          >
-                            <span>会话/活跃</span>
-                            <span>队列/等待</span>
-                            <span>并发/运行</span>
-                            <span>
-                              超时
-                              {{
-                                concurrency.enabled && concurrency.queueTimeout !== null
-                                  ? `${concurrency.queueTimeout}s`
-                                  : '--'
-                              }}
-                            </span>
+                            <div
+                              class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
+                            >
+                              <span>会话/活跃</span>
+                              <span>队列/等待</span>
+                              <span>并发/运行</span>
+                              <span>
+                                超时
+                                {{
+                                  concurrency.enabled && concurrency.queueTimeout !== null
+                                    ? `${concurrency.queueTimeout}s`
+                                    : '--'
+                                }}
+                              </span>
+                            </div>
                           </div>
-                        </div>
-                      </template>
+                        </template>
                       </td>
                       <!-- Token数量 -->
                       <td class="whitespace-nowrap px-3 py-3 text-right" style="font-size: 13px">
@@ -1494,8 +1495,8 @@
               </div>
 
               <template
-                v-for="concurrency in [getConcurrencyDisplay(key)]"
-                :key="`key-mobile-concurrency-${key.id}`"
+                v-for="(concurrency, mobileConcurrencyIndex) in [getConcurrencyDisplay(key)]"
+                :key="`key-mobile-concurrency-${key.id}-${mobileConcurrencyIndex}`"
               >
                 <div
                   class="mb-3 rounded-lg border border-sky-200/60 bg-sky-50/70 p-3 text-xs dark:border-sky-500/40 dark:bg-sky-900/20"
@@ -1524,7 +1525,7 @@
                           : 'text-gray-400 dark:text-gray-600'
                       "
                     >
-                      {{ concurrency.sessionEnabled ? concurrency.currentSessions ?? 0 : '--' }}
+                      {{ concurrency.sessionEnabled ? (concurrency.currentSessions ?? 0) : '--' }}
                     </span>
                     <span class="text-gray-400">/</span>
                     <span
@@ -1583,7 +1584,9 @@
                       }}
                     </span>
                   </div>
-                  <div class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400">
+                  <div
+                    class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
+                  >
                     <span>会话/活跃</span>
                     <span>队列/等待</span>
                     <span>并发/运行</span>
@@ -4153,7 +4156,7 @@ const exportToExcel = () => {
         并发控制:
           key.concurrencyConfig && key.concurrencyConfig.enabled
             ? `会话 ${concurrency.sessionEnabled ? concurrency.maxSessions : '--'} / ${
-                concurrency.sessionEnabled ? concurrency.currentSessions ?? 0 : '--'
+                concurrency.sessionEnabled ? (concurrency.currentSessions ?? 0) : '--'
               } | 队列 ${concurrency.maxQueueSize ?? '--'} / ${
                 concurrency.currentWaiting ?? '--'
               } | 并发 ${concurrency.maxConcurrency ?? '--'} / ${

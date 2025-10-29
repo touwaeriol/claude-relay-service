@@ -438,12 +438,15 @@
             v-model="form.concurrencyConfig"
             description="限制此 API Key 的最大并发请求数，超出时可选择排队等待或立即拒绝"
             :placeholders="{
-              maxConcurrency: '1',
-              queueSize: '0',
-              queueTimeout: '60'
+              maxConcurrency: '10',
+              queueSize: '20',
+              queueTimeout: '120'
             }"
             title="启用并发控制"
           />
+
+          <!-- 会话并发控制配置 -->
+          <SessionConcurrencyConfigCard v-model="form.sessionConcurrencyConfig" />
 
           <div>
             <label class="mb-2 block text-sm font-semibold text-gray-700 dark:text-gray-300"
@@ -891,6 +894,7 @@ import { useApiKeysStore } from '@/stores/apiKeys'
 import { apiClient } from '@/config/api'
 import AccountSelector from '@/components/common/AccountSelector.vue'
 import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
+import SessionConcurrencyConfigCard from '@/components/common/SessionConcurrencyConfigCard.vue'
 
 const props = defineProps({
   accounts: {
@@ -927,6 +931,41 @@ const localAccounts = ref({
   droidGroups: []
 })
 
+const CONCURRENCY_SERVICE_OPTIONS = ['claude', 'gemini', 'openai', 'droid']
+
+const sanitizeTargetServices = (services) => {
+  if (!Array.isArray(services)) {
+    return []
+  }
+
+  const unique = new Set()
+  services.forEach((service) => {
+    if (typeof service !== 'string') {
+      return
+    }
+    const value = service.trim().toLowerCase()
+    if (value && CONCURRENCY_SERVICE_OPTIONS.includes(value)) {
+      unique.add(value)
+    }
+  })
+
+  return Array.from(unique)
+}
+
+const buildConcurrencyPayload = () => ({
+  enabled: !!form.concurrencyConfig.enabled,
+  maxConcurrency: form.concurrencyConfig.maxConcurrency,
+  queueSize: form.concurrencyConfig.queueSize,
+  queueTimeout: form.concurrencyConfig.queueTimeout,
+  targetServices: sanitizeTargetServices(form.concurrencyConfig.targetServices)
+})
+
+const buildSessionConcurrencyPayload = () => ({
+  enabled: !!form.sessionConcurrencyConfig.enabled,
+  maxSessions: form.sessionConcurrencyConfig.maxSessions,
+  windowSeconds: form.sessionConcurrencyConfig.windowSeconds
+})
+
 // 表单验证状态
 const errors = ref({
   name: ''
@@ -955,9 +994,15 @@ const form = reactive({
   rateLimitCost: '', // 新增：费用限制
   concurrencyConfig: {
     enabled: false,
-    maxConcurrency: 1,
-    queueSize: 0,
-    queueTimeout: 60
+    maxConcurrency: 10,
+    queueSize: 20,
+    queueTimeout: 120,
+    targetServices: []
+  },
+  sessionConcurrencyConfig: {
+    enabled: false,
+    maxSessions: 10,
+    windowSeconds: 3600
   },
   dailyCostLimit: '',
   totalCostLimit: '',
@@ -1343,7 +1388,8 @@ const createApiKey = async () => {
         form.rateLimitCost !== '' && form.rateLimitCost !== null
           ? parseFloat(form.rateLimitCost)
           : null,
-      concurrencyConfig: form.concurrencyConfig,
+      concurrencyConfig: buildConcurrencyPayload(),
+      sessionConcurrencyConfig: buildSessionConcurrencyPayload(),
       dailyCostLimit:
         form.dailyCostLimit !== '' && form.dailyCostLimit !== null
           ? parseFloat(form.dailyCostLimit)

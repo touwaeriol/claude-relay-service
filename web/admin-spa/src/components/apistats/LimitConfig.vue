@@ -234,105 +234,77 @@
                 Realtime
               </span>
             </div>
-            <template
-              v-if="
-                statsData.limits.concurrencyConfig?.enabled || statsData.limits.sessionEnabled
-              "
-            >
+            <template v-if="hasConcurrencyLimits">
               <div class="flex flex-wrap items-center gap-2 font-mono text-base md:text-lg">
                 <span
                   :class="
-                    statsData.limits.sessionEnabled
+                    concurrencyLimits.sessionEnabled
                       ? 'text-sky-600 dark:text-sky-300'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.sessionEnabled ? statsData.limits.maxSessions || 0 : '--'
-                  }}
+                  {{ concurrencyLimits.sessionEnabled ? concurrencyLimits.maxSessions : '--' }}
                 </span>
                 <span class="text-gray-400">/</span>
                 <span
                   :class="
-                    statsData.limits.sessionEnabled && (statsData.limits.currentSessions || 0) > 0
+                    concurrencyLimits.sessionEnabled && concurrencyLimits.currentSessions > 0
                       ? 'text-sky-500 dark:text-sky-200'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.sessionEnabled ? statsData.limits.currentSessions || 0 : '--'
-                  }}
+                  {{ concurrencyLimits.sessionEnabled ? concurrencyLimits.currentSessions : '--' }}
                 </span>
                 <span class="text-gray-400">/</span>
                 <span
                   :class="
-                    statsData.limits.concurrencyConfig?.enabled
+                    concurrencyLimits.queueEnabled
                       ? 'text-blue-600 dark:text-blue-300'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.concurrencyConfig?.enabled
-                      ? statsData.limits.maxQueueSize || 0
-                      : '--'
-                  }}
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.maxQueueSize : '--' }}
                 </span>
                 <span class="text-gray-400">/</span>
                 <span
                   :class="
-                    statsData.limits.concurrencyConfig?.enabled &&
-                    (statsData.limits.currentWaiting || 0) > 0
+                    concurrencyLimits.queueEnabled && concurrencyLimits.currentWaiting > 0
                       ? 'text-orange-600 dark:text-orange-300'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.concurrencyConfig?.enabled
-                      ? statsData.limits.currentWaiting || 0
-                      : '--'
-                  }}
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.currentWaiting : '--' }}
                 </span>
                 <span class="text-gray-400">/</span>
                 <span
                   :class="
-                    statsData.limits.concurrencyConfig?.enabled
+                    concurrencyLimits.queueEnabled
                       ? 'text-green-600 dark:text-green-300'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.concurrencyConfig?.enabled
-                      ? statsData.limits.maxConcurrency || 0
-                      : '--'
-                  }}
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.maxConcurrency : '--' }}
                 </span>
                 <span class="text-gray-400">/</span>
                 <span
                   :class="
-                    statsData.limits.concurrencyConfig?.enabled &&
-                    (statsData.limits.currentRunning || 0) > 0
+                    concurrencyLimits.queueEnabled && concurrencyLimits.currentRunning > 0
                       ? 'text-purple-600 dark:text-purple-300'
                       : 'text-gray-400 dark:text-gray-600'
                   "
                 >
-                  {{
-                    statsData.limits.concurrencyConfig?.enabled
-                      ? statsData.limits.currentRunning || 0
-                      : '--'
-                  }}
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.currentRunning : '--' }}
                 </span>
               </div>
-              <div class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+              <div
+                class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400"
+              >
                 <span>会话/活跃</span>
                 <span>队列/等待</span>
                 <span>并发/运行</span>
                 <span>
                   超时
-                  {{
-                    statsData.limits.concurrencyConfig?.enabled
-                      ? `${statsData.limits.concurrencyConfig.queueTimeout || 0}s`
-                      : '--'
-                  }}
+                  {{ concurrencyLimits.queueEnabled ? `${concurrencyLimits.queueTimeout}s` : '--' }}
                 </span>
               </div>
             </template>
@@ -433,6 +405,35 @@ import WindowCountdown from '@/components/apikeys/WindowCountdown.vue'
 
 const apiStatsStore = useApiStatsStore()
 const { statsData, multiKeyMode, aggregatedStats, invalidKeys } = storeToRefs(apiStatsStore)
+
+const concurrencyLimits = computed(() => {
+  const limits = statsData.value?.limits || {}
+  const config = limits.concurrencyConfig || {}
+
+  return {
+    sessionEnabled: limits.sessionEnabled === true,
+    maxSessions: Number.isFinite(limits.maxSessions) ? limits.maxSessions : 0,
+    currentSessions: Number.isFinite(limits.currentSessions) ? limits.currentSessions : 0,
+    queueEnabled: config.enabled === true,
+    maxQueueSize: Number.isFinite(limits.maxQueueSize)
+      ? limits.maxQueueSize
+      : Number.isFinite(config.queueSize)
+        ? config.queueSize
+        : 0,
+    currentWaiting: Number.isFinite(limits.currentWaiting) ? limits.currentWaiting : 0,
+    maxConcurrency: Number.isFinite(limits.maxConcurrency)
+      ? limits.maxConcurrency
+      : Number.isFinite(config.maxConcurrency)
+        ? config.maxConcurrency
+        : 0,
+    currentRunning: Number.isFinite(limits.currentRunning) ? limits.currentRunning : 0,
+    queueTimeout: Number.isFinite(config.queueTimeout) ? config.queueTimeout : 0
+  }
+})
+
+const hasConcurrencyLimits = computed(
+  () => concurrencyLimits.value.sessionEnabled || concurrencyLimits.value.queueEnabled
+)
 
 const hasModelRestrictions = computed(() => {
   const restriction = statsData.value?.restrictions

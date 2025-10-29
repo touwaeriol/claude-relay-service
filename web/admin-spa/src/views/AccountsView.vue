@@ -1155,12 +1155,11 @@
                   <div class="text-[10px] text-gray-500 dark:text-gray-400">
                     <span
                       :class="
-                        account.concurrency.sessionEnabled
-                          ? 'text-sky-600 dark:text-sky-400'
-                          : ''
+                        account.concurrency.sessionEnabled ? 'text-sky-600 dark:text-sky-400' : ''
                       "
                       >会话</span
-                    >/ <span
+                    >/
+                    <span
                       :class="
                         account.concurrency.sessionEnabled &&
                         account.concurrency.currentSessions > 0
