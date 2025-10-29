@@ -5,6 +5,7 @@ const apiKeyService = require('../services/apiKeyService')
 const CostCalculator = require('../utils/costCalculator')
 const claudeAccountService = require('../services/claudeAccountService')
 const openaiAccountService = require('../services/openaiAccountService')
+const concurrencyManager = require('../services/concurrencyManager')
 
 const router = express.Router()
 
@@ -243,7 +244,9 @@ router.post('/api/user-stats', async (req, res) => {
       ? concurrencyConfig.maxConcurrency
       : 0
 
-    const currentConcurrency = await redis.getConcurrency(keyId)
+    const concurrencyStats = await concurrencyManager.getStats(`apikey:${keyId}`)
+    const currentConcurrency = concurrencyStats ? concurrencyStats.running : 0
+    const currentConcurrencyQueue = concurrencyStats ? concurrencyStats.waiting : 0
 
     // 计算总费用 - 使用与模型统计相同的逻辑（按模型分别计算）
     let totalCost = 0
@@ -462,6 +465,13 @@ router.post('/api/user-stats', async (req, res) => {
         tokenLimit: fullKeyData.tokenLimit || 0,
         concurrencyLimit: derivedConcurrencyLimit,
         concurrencyConfig,
+        sessionEnabled: false,
+        maxSessions: 0,
+        currentSessions: 0,
+        maxQueueSize: concurrencyConfig.enabled ? concurrencyConfig.queueSize || 0 : 0,
+        currentWaiting: currentConcurrencyQueue,
+        maxConcurrency: concurrencyConfig.enabled ? concurrencyConfig.maxConcurrency || 0 : 0,
+        currentRunning: currentConcurrency,
         rateLimitWindow: fullKeyData.rateLimitWindow || 0,
         rateLimitRequests: fullKeyData.rateLimitRequests || 0,
         rateLimitCost: parseFloat(fullKeyData.rateLimitCost) || 0, // 新增：费用限制
@@ -473,6 +483,7 @@ router.post('/api/user-stats', async (req, res) => {
         currentWindowTokens,
         currentWindowCost, // 新增：当前窗口费用
         currentConcurrency,
+        currentConcurrencyQueue,
         currentDailyCost,
         currentTotalCost: totalCost,
         weeklyOpusCost: (await redis.getWeeklyOpusCost(keyId)) || 0, // 当前 Opus 周费用

@@ -118,6 +118,46 @@ class SessionConcurrencyManager {
   }
 
   /**
+   * Lua 脚本：原子性地检查并添加会话
+   * 返回值：
+   *   [1, 'existing'] - 会话已存在，已更新时间戳
+   *   [1, 'added', currentCount] - 成功添加新会话，返回当前会话数
+   *   [0, currentCount] - 达到上限，拒绝添加
+   */
+  _getCheckAndAddLuaScript() {
+    return `
+      local redisKey = KEYS[1]
+      local now = tonumber(ARGV[1])
+      local cutoffTime = tonumber(ARGV[2])
+      local maxSessions = tonumber(ARGV[3])
+      local sessionHash = ARGV[4]
+
+      -- 检查是否已存在
+      local existingScore = redis.call('ZSCORE', redisKey, sessionHash)
+      if existingScore then
+        -- 会话已存在，更新时间戳
+        redis.call('ZADD', redisKey, now, sessionHash)
+        return {1, 'existing'}
+      end
+
+      -- 清理过期会话
+      local cleanedCount = redis.call('ZREMRANGEBYSCORE', redisKey, '-inf', cutoffTime)
+
+      -- 统计当前会话数
+      local currentCount = redis.call('ZCARD', redisKey)
+
+      -- 检查是否达到上限
+      if currentCount >= maxSessions then
+        return {0, currentCount}
+      end
+
+      -- 添加新会话
+      redis.call('ZADD', redisKey, now, sessionHash)
+      return {1, 'added', currentCount + 1}
+    `
+  }
+
+  /**
    * 检查会话并发限制
    *
    * @param {string} accountId - 账户ID
@@ -156,115 +196,73 @@ class SessionConcurrencyManager {
     const redis = this._getRedis()
     const redisKey = `session_concurrency:${accountId}`
     const now = Date.now()
+    const cutoffTime = now - windowSeconds * 1000
 
     try {
-      // 🔍 检查会话是否已存在
-      const existingScore = await redis.zscore(redisKey, sessionHash)
+      // 🔒 使用 Lua 脚本执行原子操作：检查+清理+统计+添加
+      const luaScript = this._getCheckAndAddLuaScript()
+      const result = await redis.eval(luaScript, 1, redisKey, now, cutoffTime, maxSessions, sessionHash)
 
-      if (existingScore !== null) {
-        // ✅ 会话已存在，更新Score并刷新TTL
-        const pipeline = redis.pipeline()
-        pipeline.zadd(redisKey, now, sessionHash) // 更新最后活跃时间
+      const [success, action, currentCount] = result
 
-        // 🔍 检查配置是否变化（类似 concurrencyManager 的 DCL 模式）
-        const cached = this.accountConfigs.get(accountId)
+      // 🔍 检查配置是否变化，更新 TTL
+      const cached = this.accountConfigs.get(accountId)
+      if (!cached || cached.windowSeconds !== windowSeconds) {
+        await redis.expire(redisKey, windowSeconds)
+        this.accountConfigs.set(accountId, { windowSeconds })
+        logger.debug(
+          `🔄 [SessionConcurrency] Config updated for ${accountId}: windowSeconds=${windowSeconds}`
+        )
+      }
 
-        if (!cached || cached.windowSeconds !== windowSeconds) {
-          // 配置变了，或首次设置
-          pipeline.expire(redisKey, windowSeconds)
-          this.accountConfigs.set(accountId, { windowSeconds })
+      // 处理结果
+      if (success === 1) {
+        if (action === 'existing') {
+          // 会话已存在
           logger.debug(
-            `🔄 [SessionConcurrency] Config updated for ${accountId}: windowSeconds=${windowSeconds}`
+            `✅ [SessionConcurrency] Existing session refreshed: ${accountId} | ${sessionHash.substring(0, 8)}...`
           )
-        }
-        // 配置未变，跳过 EXPIRE
-
-        await pipeline.exec()
-
-        logger.debug(
-          `✅ [SessionConcurrency] Existing session refreshed: ${accountId} | ${sessionHash.substring(0, 8)}...`
-        )
-
-        return { allowed: true }
-      }
-
-      // 🧹 清理过期会话 + 统计当前会话数 + 添加新会话（原子操作）
-      const cutoffTime = now - windowSeconds * 1000
-      const pipeline = redis.pipeline()
-
-      // 1. 清理过期会话
-      pipeline.zremrangebyscore(redisKey, '-inf', cutoffTime)
-
-      // 2. 统计当前会话数
-      pipeline.zcard(redisKey)
-
-      const results = await pipeline.exec()
-
-      // 解析结果
-      const cleanedCount = results[0][1] // ZREMRANGEBYSCORE 返回删除数量
-      const currentSessionCount = results[1][1] // ZCARD 返回成员数量
-
-      if (cleanedCount > 0) {
-        logger.debug(
-          `🧹 [SessionConcurrency] Cleaned ${cleanedCount} expired sessions for ${accountId}`
-        )
-      }
-
-      // ❌ 达到会话上限
-      if (currentSessionCount >= maxSessions) {
-        logger.warn(
-          `🚫 [SessionConcurrency] Session limit exceeded for ${accountId}: ${currentSessionCount}/${maxSessions} sessions`
-        )
-
-        const error = new Error(
-          `Session concurrency limit exceeded: ${currentSessionCount} active sessions, maximum is ${maxSessions} within ${windowSeconds}s window`
-        )
-        error.code = 'SESSION_LIMIT_EXCEEDED'
-        error.accountId = accountId
-        error.currentSessions = currentSessionCount
-        error.maxSessions = maxSessions
-        error.windowSeconds = windowSeconds
-        error.details = {
-          current: currentSessionCount,
-          max: maxSessions,
-          windowSeconds
-        }
-
-        return {
-          allowed: false,
-          error,
-          stats: {
-            current: currentSessionCount,
-            max: maxSessions,
-            windowSeconds
+          return { allowed: true }
+        } else if (action === 'added') {
+          // 成功添加新会话
+          logger.info(
+            `➕ [SessionConcurrency] New session added: ${accountId} | ${sessionHash.substring(0, 8)}... | ${currentCount}/${maxSessions} sessions`
+          )
+          return {
+            allowed: true,
+            stats: {
+              current: currentCount,
+              max: maxSessions,
+              windowSeconds
+            }
           }
         }
       }
 
-      // ✅ 添加新会话
-      const addPipeline = redis.pipeline()
-      addPipeline.zadd(redisKey, now, sessionHash)
-
-      // 🔍 检查配置是否变化（与上面相同的逻辑）
-      const cached = this.accountConfigs.get(accountId)
-
-      if (!cached || cached.windowSeconds !== windowSeconds) {
-        // 配置变了，或首次设置
-        addPipeline.expire(redisKey, windowSeconds)
-        this.accountConfigs.set(accountId, { windowSeconds })
-      }
-      // 配置未变，跳过 EXPIRE
-
-      await addPipeline.exec()
-
-      logger.info(
-        `➕ [SessionConcurrency] New session added: ${accountId} | ${sessionHash.substring(0, 8)}... | ${currentSessionCount + 1}/${maxSessions} sessions`
+      // 达到会话上限（success === 0）
+      logger.warn(
+        `🚫 [SessionConcurrency] Session limit exceeded for ${accountId}: ${currentCount}/${maxSessions} sessions`
       )
 
+      const error = new Error(
+        `Session concurrency limit exceeded: ${currentCount} active sessions, maximum is ${maxSessions} within ${windowSeconds}s window`
+      )
+      error.code = 'SESSION_LIMIT_EXCEEDED'
+      error.accountId = accountId
+      error.currentSessions = currentCount
+      error.maxSessions = maxSessions
+      error.windowSeconds = windowSeconds
+      error.details = {
+        current: currentCount,
+        max: maxSessions,
+        windowSeconds
+      }
+
       return {
-        allowed: true,
+        allowed: false,
+        error,
         stats: {
-          current: currentSessionCount + 1,
+          current: currentCount,
           max: maxSessions,
           windowSeconds
         }

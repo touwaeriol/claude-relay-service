@@ -26,7 +26,8 @@ async function buildSessionContext(sessionHash, requestBody) {
   return {
     sessionHash,
     isNewSession,
-    requestBody // ✅ 保留原始请求体，用于摘要验证
+    requestBody, // ✅ 保留原始请求体，用于摘要验证
+    digestValidationCache: {} // 🚀 摘要验证缓存，避免重复验证 { accountId: { valid, shouldClearBinding, action } }
   }
 }
 

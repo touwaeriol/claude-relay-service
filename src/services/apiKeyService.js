@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid')
 const config = require('../../config/config')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
+const concurrencyManager = require('./concurrencyManager')
 
 const ACCOUNT_TYPE_CONFIG = {
   claude: { prefix: 'claude:account:' },
@@ -549,7 +550,26 @@ class ApiKeyService {
         key.rateLimitWindow = parseInt(key.rateLimitWindow || 0)
         key.rateLimitRequests = parseInt(key.rateLimitRequests || 0)
         key.rateLimitCost = parseFloat(key.rateLimitCost || 0) // 新增：速率限制费用字段
-        key.currentConcurrency = await redis.getConcurrency(key.id)
+        const concurrencyStats = await concurrencyManager.getStats(`apikey:${key.id}`)
+        const currentRunning = concurrencyStats ? concurrencyStats.running : 0
+        const currentWaiting = concurrencyStats ? concurrencyStats.waiting : 0
+        key.currentConcurrency = currentRunning
+        key.currentConcurrencyQueue = currentWaiting
+        key.concurrencyStats = {
+          sessionEnabled: false,
+          maxSessions: 0,
+          currentSessions: 0,
+          maxQueueSize:
+            key.concurrencyConfig.enabled && Number.isFinite(key.concurrencyConfig.queueSize)
+              ? Number(key.concurrencyConfig.queueSize)
+              : 0,
+          currentWaiting,
+          maxConcurrency:
+            key.concurrencyConfig.enabled && Number.isFinite(key.concurrencyConfig.maxConcurrency)
+              ? Number(key.concurrencyConfig.maxConcurrency)
+              : 0,
+          currentRunning
+        }
         key.isActive = key.isActive === 'true'
         key.enableModelRestriction = key.enableModelRestriction === 'true'
         key.enableClientRestriction = key.enableClientRestriction === 'true'

@@ -80,7 +80,8 @@ class UnifiedClaudeScheduler {
         account,
         sessionHash,
         requestBody.messages,
-        isNewSession // 传递新会话标志
+        isNewSession, // 传递新会话标志
+        sessionContext // 🚀 传递 sessionContext 用于缓存
       )
 
       if (!validationResult.valid) {
@@ -305,7 +306,8 @@ class UnifiedClaudeScheduler {
                 boundAccount,
                 sessionHash,
                 sessionContext.requestBody.messages,
-                sessionContext?.isNewSession || false // 传递新会话标志
+                sessionContext?.isNewSession || false, // 传递新会话标志
+                sessionContext // 🚀 传递 sessionContext 用于缓存
               )
 
               if (!validationResult.valid) {
@@ -360,7 +362,8 @@ class UnifiedClaudeScheduler {
               boundConsoleAccount,
               sessionHash,
               sessionContext.requestBody.messages,
-              sessionContext?.isNewSession || false // 传递新会话标志
+              sessionContext?.isNewSession || false, // 传递新会话标志
+              sessionContext // 🚀 传递 sessionContext 用于缓存
             )
 
             if (!validationResult.valid) {
@@ -1454,7 +1457,8 @@ class UnifiedClaudeScheduler {
             account,
             sessionHash,
             sessionContext.requestBody.messages,
-            sessionContext?.isNewSession || false // 传递新会话标志
+            sessionContext?.isNewSession || false, // 传递新会话标志
+            sessionContext // 🚀 传递 sessionContext 用于缓存
           )
 
           if (validationResult.valid) {
@@ -1643,13 +1647,21 @@ class UnifiedClaudeScheduler {
 
   /**
    * 验证独占账户的消息摘要（如果启用）
+   * 支持缓存，避免同一请求重复验证
    * @param {Object} account - 账户对象
    * @param {string} sessionHash - 会话哈希
    * @param {Array} messages - 请求中的消息数组
    * @param {boolean} isNewSession - 是否为新会话
+   * @param {Object} sessionContext - 会话上下文（用于缓存）
    * @returns {Promise<{valid: boolean, shouldClearBinding?: boolean}>} - 验证结果
    */
-  async _validateExclusiveAccountDigest(account, sessionHash, messages, isNewSession = false) {
+  async _validateExclusiveAccountDigest(
+    account,
+    sessionHash,
+    messages,
+    isNewSession = false,
+    sessionContext = null
+  ) {
     const accountId = account.accountId || account.id
     const isExclusive =
       account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
@@ -1661,6 +1673,15 @@ class UnifiedClaudeScheduler {
       return { valid: true }
     }
 
+    // 🚀 检查缓存（避免重复验证）
+    if (sessionContext?.digestValidationCache?.[accountId]) {
+      const cached = sessionContext.digestValidationCache[accountId]
+      logger.debug(
+        `📋 Using cached digest validation result for ${accountId.substring(0, 8)}...: ${cached.valid ? 'PASS' : 'FAIL'}`
+      )
+      return cached
+    }
+
     // 执行摘要验证（传递 isNewSession）
     const digestValid = await this._validateSessionDigest(
       accountId,
@@ -1668,6 +1689,8 @@ class UnifiedClaudeScheduler {
       messages,
       isNewSession
     )
+
+    let validationResult
 
     if (!digestValid) {
       logger.warn(
@@ -1678,7 +1701,7 @@ class UnifiedClaudeScheduler {
       if (sessionHash) {
         try {
           // 清除粘性会话绑定
-          await redis.clearSessionAccountMapping(sessionHash)
+          await redis.deleteSessionAccountMapping(sessionHash)
           logger.info(`🗑️ Cleared sticky session binding for ${sessionHash.substring(0, 8)}...`)
 
           // 清除会话摘要
@@ -1693,11 +1716,18 @@ class UnifiedClaudeScheduler {
         }
       }
 
-      return { valid: false, shouldClearBinding: true }
+      validationResult = { valid: false, shouldClearBinding: true }
+    } else {
+      logger.debug(`✅ Exclusive account ${account.name || accountId} digest validation passed`)
+      validationResult = { valid: true }
     }
 
-    logger.debug(`✅ Exclusive account ${account.name || accountId} digest validation passed`)
-    return { valid: true }
+    // 🚀 缓存验证结果
+    if (sessionContext?.digestValidationCache) {
+      sessionContext.digestValidationCache[accountId] = validationResult
+    }
+
+    return validationResult
   }
 
   /**

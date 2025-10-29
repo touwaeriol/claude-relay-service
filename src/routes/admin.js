@@ -11,6 +11,7 @@ const openaiResponsesAccountService = require('../services/openaiResponsesAccoun
 const azureOpenaiAccountService = require('../services/azureOpenaiAccountService')
 const accountGroupService = require('../services/accountGroupService')
 const concurrencyManager = require('../services/concurrencyManager')
+const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -134,11 +135,14 @@ async function getConcurrencyStats(account) {
     maxQueueSize: 0,
     currentWaiting: 0,
     maxConcurrency: 0,
-    currentRunning: 0
+    currentRunning: 0,
+    maxSessions: 0,
+    currentSessions: 0,
+    sessionEnabled: false
   }
 
   // 检查账户是否配置了并发控制
-  if (!account || !account.concurrencyControl) {
+  if (!account) {
     return defaultStats
   }
 
@@ -164,20 +168,66 @@ async function getConcurrencyStats(account) {
 
     const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
 
-    if (!normalized.enabled) {
-      return defaultStats
+    const result = { ...defaultStats }
+
+    if (normalized.enabled) {
+      const stats = await concurrencyManager.getStats(account.id)
+      result.maxQueueSize = normalized.queueSize || 0
+      result.currentWaiting = stats?.waiting || 0
+      result.maxConcurrency = normalized.maxConcurrency || 0
+      result.currentRunning = stats?.running || 0
     }
 
-    // 从 concurrencyManager 获取实时统计
-    const stats = await concurrencyManager.getStats(account.id)
-
-    // 返回结果：配置的最大值 + 实时的当前值（如果没有实时统计则为0）
-    return {
-      maxQueueSize: normalized.queueSize || 0,
-      currentWaiting: stats?.waiting || 0,
-      maxConcurrency: normalized.maxConcurrency || 0,
-      currentRunning: stats?.running || 0
+    // 处理会话并发配置
+    const sessionDefaults = {
+      enabled: false,
+      maxSessions: 0,
+      windowSeconds: 3600
     }
+
+    let sessionConfig = sessionDefaults
+    if (account.sessionConcurrencyConfig) {
+      if (typeof account.sessionConcurrencyConfig === 'string') {
+        try {
+          sessionConfig = {
+            ...sessionDefaults,
+            ...JSON.parse(account.sessionConcurrencyConfig)
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to parse sessionConcurrencyConfig for account ${account.id}:`,
+            error.message
+          )
+          sessionConfig = sessionDefaults
+        }
+      } else if (typeof account.sessionConcurrencyConfig === 'object') {
+        sessionConfig = {
+          ...sessionDefaults,
+          ...account.sessionConcurrencyConfig
+        }
+      }
+    }
+
+    let currentSessions = 0
+    if (sessionConfig.enabled) {
+      try {
+        const sessionStats = await sessionConcurrencyManager.getAccountStats(account.id)
+        currentSessions = sessionStats?.current || 0
+      } catch (error) {
+        logger.error(
+          `Failed to fetch session concurrency stats for account ${account.id}:`,
+          error.message
+        )
+      }
+    }
+
+    if (sessionConfig.enabled) {
+      result.sessionEnabled = true
+      result.maxSessions = sessionConfig.maxSessions || 0
+      result.currentSessions = currentSessions
+    }
+
+    return result
   } catch (error) {
     logger.error(`Failed to get concurrency stats for account ${account.id}:`, error.message)
     return defaultStats

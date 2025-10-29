@@ -227,28 +227,121 @@
 
         <!-- 其他限制信息 -->
         <div class="space-y-4 border-t border-gray-100 pt-3 dark:border-gray-700">
-          <div class="flex items-start justify-between gap-4">
-            <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发控制</span>
-            <div class="text-right text-sm font-medium text-gray-900 md:text-base">
-              <template v-if="statsData.limits.concurrencyConfig?.enabled">
-                <div>
-                  并发 {{ statsData.limits.concurrencyConfig.maxConcurrency }}
-                  <span class="mx-1 text-gray-400">/</span>
-                  队列 {{ statsData.limits.concurrencyConfig.queueSize }}
-                  <span class="mx-1 text-gray-400">/</span>
-                  超时 {{ statsData.limits.concurrencyConfig.queueTimeout }}s
-                </div>
-                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  当前占用 {{ statsData.limits.currentConcurrency || 0 }}
-                </div>
-              </template>
-              <template v-else>
-                <span class="flex items-center gap-1 text-gray-500 dark:text-gray-400">
-                  <i class="fas fa-power-off text-xs" />
-                  未启用
-                </span>
-              </template>
+          <div class="flex flex-col gap-2">
+            <div class="flex items-start justify-between gap-4">
+              <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发控制</span>
+              <span class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                Realtime
+              </span>
             </div>
+            <template
+              v-if="
+                statsData.limits.concurrencyConfig?.enabled || statsData.limits.sessionEnabled
+              "
+            >
+              <div class="flex flex-wrap items-center gap-2 font-mono text-base md:text-lg">
+                <span
+                  :class="
+                    statsData.limits.sessionEnabled
+                      ? 'text-sky-600 dark:text-sky-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.sessionEnabled ? statsData.limits.maxSessions || 0 : '--'
+                  }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    statsData.limits.sessionEnabled && (statsData.limits.currentSessions || 0) > 0
+                      ? 'text-sky-500 dark:text-sky-200'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.sessionEnabled ? statsData.limits.currentSessions || 0 : '--'
+                  }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? 'text-blue-600 dark:text-blue-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? statsData.limits.maxQueueSize || 0
+                      : '--'
+                  }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    statsData.limits.concurrencyConfig?.enabled &&
+                    (statsData.limits.currentWaiting || 0) > 0
+                      ? 'text-orange-600 dark:text-orange-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? statsData.limits.currentWaiting || 0
+                      : '--'
+                  }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? 'text-green-600 dark:text-green-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? statsData.limits.maxConcurrency || 0
+                      : '--'
+                  }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    statsData.limits.concurrencyConfig?.enabled &&
+                    (statsData.limits.currentRunning || 0) > 0
+                      ? 'text-purple-600 dark:text-purple-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? statsData.limits.currentRunning || 0
+                      : '--'
+                  }}
+                </span>
+              </div>
+              <div class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
+                <span>会话/活跃</span>
+                <span>队列/等待</span>
+                <span>并发/运行</span>
+                <span>
+                  超时
+                  {{
+                    statsData.limits.concurrencyConfig?.enabled
+                      ? `${statsData.limits.concurrencyConfig.queueTimeout || 0}s`
+                      : '--'
+                  }}
+                </span>
+              </div>
+            </template>
+            <template v-else>
+              <span class="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                <i class="fas fa-power-off text-xs" />
+                未启用
+              </span>
+            </template>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">模型限制</span>

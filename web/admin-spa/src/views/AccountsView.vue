@@ -1078,11 +1078,46 @@
                 <div
                   v-if="
                     account.concurrency &&
-                    (account.concurrency.maxConcurrency > 0 || account.concurrency.maxQueueSize > 0)
+                    (account.concurrency.maxConcurrency > 0 ||
+                      account.concurrency.maxQueueSize > 0 ||
+                      account.concurrency.maxSessions > 0)
                   "
                   class="space-y-1"
                 >
-                  <div class="flex items-center gap-1 font-mono text-sm">
+                  <div class="flex flex-wrap items-center gap-1 font-mono text-sm">
+                    <!-- 最大会话 -->
+                    <span
+                      class="font-semibold"
+                      :class="
+                        account.concurrency.sessionEnabled
+                          ? 'text-sky-600 dark:text-sky-400'
+                          : 'text-gray-400 dark:text-gray-500'
+                      "
+                    >
+                      {{
+                        account.concurrency.sessionEnabled
+                          ? account.concurrency.maxSessions || 0
+                          : '—'
+                      }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <!-- 当前会话 -->
+                    <span
+                      class="font-semibold"
+                      :class="
+                        account.concurrency.sessionEnabled &&
+                        account.concurrency.currentSessions > 0
+                          ? 'text-sky-500 dark:text-sky-300'
+                          : 'text-gray-400 dark:text-gray-500'
+                      "
+                    >
+                      {{
+                        account.concurrency.sessionEnabled
+                          ? account.concurrency.currentSessions || 0
+                          : '—'
+                      }}
+                    </span>
+                    <span class="text-gray-400">/</span>
                     <!-- 最大队列 -->
                     <span class="font-semibold text-blue-600 dark:text-blue-400">
                       {{ account.concurrency.maxQueueSize }}
@@ -1118,7 +1153,22 @@
                     </span>
                   </div>
                   <div class="text-[10px] text-gray-500 dark:text-gray-400">
-                    <span class="text-blue-600 dark:text-blue-400">队列</span>/
+                    <span
+                      :class="
+                        account.concurrency.sessionEnabled
+                          ? 'text-sky-600 dark:text-sky-400'
+                          : ''
+                      "
+                      >会话</span
+                    >/ <span
+                      :class="
+                        account.concurrency.sessionEnabled &&
+                        account.concurrency.currentSessions > 0
+                          ? 'text-sky-500 dark:text-sky-300'
+                          : ''
+                      "
+                      >活跃</span
+                    >/ <span class="text-blue-600 dark:text-blue-400">队列</span>/
                     <span
                       :class="
                         account.concurrency.currentWaiting > 0
