@@ -45,6 +45,33 @@ function normalizeNullableDate(value) {
   return value
 }
 
+function parseConcurrencyConfigPayload(source = {}) {
+  if (!('concurrencyConfig' in source)) {
+    return { provided: false, value: null }
+  }
+
+  let rawConfig = source.concurrencyConfig
+
+  if (typeof rawConfig === 'string' && rawConfig.trim() !== '') {
+    try {
+      rawConfig = JSON.parse(rawConfig)
+    } catch (error) {
+      throw new Error('Invalid concurrencyConfig JSON')
+    }
+  }
+
+  if (rawConfig === '' || rawConfig === null || rawConfig === undefined) {
+    rawConfig = null
+  }
+
+  if (rawConfig !== null && rawConfig !== undefined && typeof rawConfig !== 'object') {
+    throw new Error('concurrencyConfig must be an object')
+  }
+
+  const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
+  return { provided: true, value: normalized }
+}
+
 // 🛠️ 工具函数：映射前端字段名到后端字段名
 /**
  * 映射前端的 expiresAt 字段到后端的 subscriptionExpiresAt 字段
@@ -662,7 +689,7 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -697,15 +724,6 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
 
     if (tokenLimit && (!Number.isInteger(Number(tokenLimit)) || Number(tokenLimit) < 0)) {
       return res.status(400).json({ error: 'Token limit must be a non-negative integer' })
-    }
-
-    if (
-      concurrencyLimit !== undefined &&
-      concurrencyLimit !== null &&
-      concurrencyLimit !== '' &&
-      (!Number.isInteger(Number(concurrencyLimit)) || Number(concurrencyLimit) < 0)
-    ) {
-      return res.status(400).json({ error: 'Concurrency limit must be a non-negative integer' })
     }
 
     if (
@@ -810,6 +828,16 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       })
     }
 
+    let normalizedConcurrencyConfig = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      if (parsedConcurrency.provided) {
+        normalizedConcurrencyConfig = parsedConcurrency.value
+      }
+    } catch (error) {
+      return res.status(400).json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
     const newKey = await apiKeyService.generateApiKey({
       name,
       description,
@@ -822,7 +850,7 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig: normalizedConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -864,7 +892,7 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -909,6 +937,19 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
     }
 
     // 生成批量API Keys
+    let normalizedConcurrencyConfig = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      if (parsedConcurrency.provided) {
+        normalizedConcurrencyConfig = parsedConcurrency.value
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid concurrency configuration',
+        message: error.message
+      })
+    }
+
     const createdKeys = []
     const errors = []
 
@@ -927,7 +968,7 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
           bedrockAccountId,
           droidAccountId,
           permissions,
-          concurrencyLimit,
+          concurrencyConfig: normalizedConcurrencyConfig,
           rateLimitWindow,
           rateLimitRequests,
           rateLimitCost,
@@ -1017,6 +1058,18 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
       })
     }
 
+    let batchConcurrencyProvided = false
+    let batchConcurrencyPayload = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload(updates)
+      batchConcurrencyProvided = parsedConcurrency.provided
+      batchConcurrencyPayload = parsedConcurrency.value
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
     logger.info(
       `🔄 Admin batch editing ${keyIds.length} API keys with updates: ${JSON.stringify(updates)}`
     )
@@ -1052,8 +1105,8 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         if (updates.rateLimitCost !== undefined) {
           finalUpdates.rateLimitCost = updates.rateLimitCost
         }
-        if (updates.concurrencyLimit !== undefined) {
-          finalUpdates.concurrencyLimit = updates.concurrencyLimit
+        if (batchConcurrencyProvided) {
+          finalUpdates.concurrencyConfig = batchConcurrencyPayload
         }
         if (updates.rateLimitWindow !== undefined) {
           finalUpdates.rateLimitWindow = updates.rateLimitWindow
@@ -1181,7 +1234,7 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
     const {
       name, // 添加名称字段
       tokenLimit,
-      concurrencyLimit,
+      concurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -1227,13 +1280,6 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       updates.tokenLimit = Number(tokenLimit)
     }
 
-    if (concurrencyLimit !== undefined && concurrencyLimit !== null && concurrencyLimit !== '') {
-      if (!Number.isInteger(Number(concurrencyLimit)) || Number(concurrencyLimit) < 0) {
-        return res.status(400).json({ error: 'Concurrency limit must be a non-negative integer' })
-      }
-      updates.concurrencyLimit = Number(concurrencyLimit)
-    }
-
     if (rateLimitWindow !== undefined && rateLimitWindow !== null && rateLimitWindow !== '') {
       if (!Number.isInteger(Number(rateLimitWindow)) || Number(rateLimitWindow) < 0) {
         return res
@@ -1256,6 +1302,22 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Rate limit cost must be a non-negative number' })
       }
       updates.rateLimitCost = cost
+    }
+
+    let concurrencyUpdateProvided = false
+    let concurrencyUpdatePayload = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      concurrencyUpdateProvided = parsedConcurrency.provided
+      concurrencyUpdatePayload = parsedConcurrency.value
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
+    if (concurrencyUpdateProvided) {
+      updates.concurrencyConfig = concurrencyUpdatePayload
     }
 
     if (claudeAccountId !== undefined) {

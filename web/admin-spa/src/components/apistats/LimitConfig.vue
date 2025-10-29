@@ -227,16 +227,28 @@
 
         <!-- 其他限制信息 -->
         <div class="space-y-4 border-t border-gray-100 pt-3 dark:border-gray-700">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发限制</span>
-            <span class="text-sm font-medium text-gray-900 md:text-base">
-              <span v-if="statsData.limits.concurrencyLimit > 0">
-                {{ statsData.limits.concurrencyLimit }}
-              </span>
-              <span v-else class="flex items-center gap-1">
-                <i class="fas fa-infinity text-gray-400" />
-              </span>
-            </span>
+          <div class="flex items-start justify-between gap-4">
+            <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发控制</span>
+            <div class="text-right text-sm font-medium text-gray-900 md:text-base">
+              <template v-if="statsData.limits.concurrencyConfig?.enabled">
+                <div>
+                  并发 {{ statsData.limits.concurrencyConfig.maxConcurrency }}
+                  <span class="mx-1 text-gray-400">/</span>
+                  队列 {{ statsData.limits.concurrencyConfig.queueSize }}
+                  <span class="mx-1 text-gray-400">/</span>
+                  超时 {{ statsData.limits.concurrencyConfig.queueTimeout }}s
+                </div>
+                <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  当前占用 {{ statsData.limits.currentConcurrency || 0 }}
+                </div>
+              </template>
+              <template v-else>
+                <span class="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                  <i class="fas fa-power-off text-xs" />
+                  未启用
+                </span>
+              </template>
+            </div>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">模型限制</span>

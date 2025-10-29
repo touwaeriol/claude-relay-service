@@ -318,6 +318,23 @@ router.get('/key-info', authenticateApiKey, async (req, res) => {
   try {
     const keyData = req.apiKey
 
+    const concurrencyConfig =
+      keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'object'
+        ? keyData.concurrencyConfig
+        : {
+            enabled: false,
+            maxConcurrency: 1,
+            queueSize: 0,
+            queueTimeout: 60
+          }
+
+    const derivedConcurrencyLimit =
+      typeof keyData.concurrencyLimit === 'number'
+        ? keyData.concurrencyLimit
+        : concurrencyConfig.enabled
+          ? concurrencyConfig.maxConcurrency
+          : 0
+
     res.json({
       id: keyData.id,
       name: keyData.name,
@@ -332,7 +349,8 @@ router.get('/key-info', authenticateApiKey, async (req, res) => {
         window: keyData.rateLimitWindow,
         requests: keyData.rateLimitRequests
       },
-      concurrency_limit: keyData.concurrencyLimit,
+      concurrency_limit: derivedConcurrencyLimit,
+      concurrency_config: concurrencyConfig,
       model_restrictions: {
         enabled: keyData.enableModelRestriction,
         models: keyData.restrictedModels

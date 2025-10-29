@@ -79,19 +79,16 @@ class UnifiedClaudeScheduler {
       const validationResult = await this._validateExclusiveAccountDigest(
         account,
         sessionHash,
-        requestBody.messages
+        requestBody.messages,
+        isNewSession // 传递新会话标志
       )
 
       if (!validationResult.valid) {
         logger.warn(
-          `🛑 Exclusive account ${account.name} digest validation failed, rejecting request`
+          `🛑 Exclusive account ${account.name} digest validation failed, binding and digest cleared`
         )
-
-        // ⚠️ 不清除绑定关系！不清理摘要数据！
-        // 让 Redis TTL 自动处理过期（绑定和摘要都是7天）
-        // 验证失败时：拒绝请求，跳过该账户
-
-        continue // 跳过此账户
+        // 绑定和摘要已在 _validateExclusiveAccountDigest 中清除
+        continue // 跳过此账户，fallback到其他账户
       }
 
       // 摘要验证通过（或未启用），可以用
@@ -290,14 +287,15 @@ class UnifiedClaudeScheduler {
               const validationResult = await this._validateExclusiveAccountDigest(
                 boundAccount,
                 sessionHash,
-                sessionContext.requestBody.messages
+                sessionContext.requestBody.messages,
+                sessionContext?.isNewSession || false // 传递新会话标志
               )
 
               if (!validationResult.valid) {
                 logger.warn(
-                  `🛑 Dedicated Claude OAuth account ${boundAccount.name} digest validation failed, falling back to pool`
+                  `🛑 Dedicated Claude OAuth account ${boundAccount.name} digest validation failed, binding and digest cleared, falling back to pool`
                 )
-                // ⚠️ 注意：不清理摘要数据！保留摘要可以防止攻击者通过触发验证失败来重置摘要
+                // 绑定和摘要已在 _validateExclusiveAccountDigest 中清除
                 // Fallback到共享池，不抛出错误，继续执行
               } else {
                 logger.info(
@@ -344,14 +342,15 @@ class UnifiedClaudeScheduler {
             const validationResult = await this._validateExclusiveAccountDigest(
               boundConsoleAccount,
               sessionHash,
-              sessionContext.requestBody.messages
+              sessionContext.requestBody.messages,
+              sessionContext?.isNewSession || false // 传递新会话标志
             )
 
             if (!validationResult.valid) {
               logger.warn(
-                `🛑 Dedicated Claude Console account ${boundConsoleAccount.name} digest validation failed, falling back to pool`
+                `🛑 Dedicated Claude Console account ${boundConsoleAccount.name} digest validation failed, binding and digest cleared, falling back to pool`
               )
-              // ⚠️ 注意：不清理摘要数据！保留摘要可以防止攻击者通过触发验证失败来重置摘要
+              // 绑定和摘要已在 _validateExclusiveAccountDigest 中清除
               // Fallback到共享池，不抛出错误，继续执行
             } else {
               logger.info(
@@ -1437,15 +1436,17 @@ class UnifiedClaudeScheduler {
           const validationResult = await this._validateExclusiveAccountDigest(
             account,
             sessionHash,
-            sessionContext.requestBody.messages
+            sessionContext.requestBody.messages,
+            sessionContext?.isNewSession || false // 传递新会话标志
           )
 
           if (validationResult.valid) {
             filteredAccounts.push(account)
           } else {
             logger.debug(
-              `🛑 Skipping group member ${account.name || account.accountId} due to digest validation failure`
+              `🛑 Skipping group member ${account.name || account.accountId} due to digest validation failure, binding and digest cleared`
             )
+            // 绑定和摘要已在 _validateExclusiveAccountDigest 中清除
           }
         }
 
@@ -1628,9 +1629,10 @@ class UnifiedClaudeScheduler {
    * @param {Object} account - 账户对象
    * @param {string} sessionHash - 会话哈希
    * @param {Array} messages - 请求中的消息数组
+   * @param {boolean} isNewSession - 是否为新会话
    * @returns {Promise<{valid: boolean, shouldClearBinding?: boolean}>} - 验证结果
    */
-  async _validateExclusiveAccountDigest(account, sessionHash, messages) {
+  async _validateExclusiveAccountDigest(account, sessionHash, messages, isNewSession = false) {
     const accountId = account.accountId || account.id
     const isExclusive =
       account.exclusiveSessionOnly === true || account.exclusiveSessionOnly === 'true'
@@ -1642,11 +1644,38 @@ class UnifiedClaudeScheduler {
       return { valid: true }
     }
 
-    // 执行摘要验证
-    const digestValid = await this._validateSessionDigest(accountId, sessionHash, messages)
+    // 执行摘要验证（传递 isNewSession）
+    const digestValid = await this._validateSessionDigest(
+      accountId,
+      sessionHash,
+      messages,
+      isNewSession
+    )
 
     if (!digestValid) {
-      logger.warn(`🛑 Exclusive account ${account.name || accountId} digest validation failed`)
+      logger.warn(
+        `🛑 Exclusive account ${account.name || accountId} digest validation failed, clearing binding and digest`
+      )
+
+      // 清除粘性会话绑定和摘要
+      if (sessionHash) {
+        try {
+          // 清除粘性会话绑定
+          await redis.clearSessionAccountMapping(sessionHash)
+          logger.info(`🗑️ Cleared sticky session binding for ${sessionHash.substring(0, 8)}...`)
+
+          // 清除会话摘要
+          const digestHelper = require('../utils/messageDigest')
+          const digestKey = digestHelper.getDigestRedisKey(accountId, sessionHash)
+          await redis.getClient().del(digestKey)
+          logger.info(
+            `🗑️ Cleared session digest for account ${accountId.substring(0, 8)}... session ${sessionHash.substring(0, 8)}...`
+          )
+        } catch (error) {
+          logger.error('❌ Failed to clear session binding or digest:', error)
+        }
+      }
+
       return { valid: false, shouldClearBinding: true }
     }
 
@@ -1659,21 +1688,26 @@ class UnifiedClaudeScheduler {
    * @param {string} accountId - 账户ID
    * @param {string} sessionHash - 会话哈希
    * @param {Array} messages - 请求中的消息数组
+   * @param {boolean} isNewSession - 是否为新会话（新会话允许创建摘要）
    * @returns {boolean} - 是否通过验证
    */
-  async _validateSessionDigest(accountId, sessionHash, messages) {
+  async _validateSessionDigest(accountId, sessionHash, messages, isNewSession = false) {
     try {
       const digestHelper = require('../utils/messageDigest')
       const result = await digestHelper.validateAndStoreDigest(accountId, sessionHash, messages, {
-        allowCreate: false
+        allowCreate: isNewSession // 只有新会话才允许创建摘要
       })
 
       if (!result.valid) {
-        logger.warn(`📋 Digest validation FAILED: ${result.reason}`)
+        logger.warn(
+          `📋 Digest validation FAILED for ${accountId.substring(0, 8)}...: ${result.reason} (isNewSession: ${isNewSession})`
+        )
         return false
       }
 
-      logger.info(`📋 Digest validation PASSED: ${result.action}`)
+      logger.info(
+        `📋 Digest validation PASSED for ${accountId.substring(0, 8)}...: ${result.action} (isNewSession: ${isNewSession})`
+      )
       return true
     } catch (error) {
       logger.error('❌ Error validating session digest:', error)

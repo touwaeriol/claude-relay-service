@@ -68,6 +68,11 @@ async function waitForPromiseWithTimeout(promise, timeoutMs, errorMessage) {
 }
 
 describe('ConcurrencyManager', () => {
+  console.log('🔧 Test Redis config:', {
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT,
+    password: process.env.REDIS_PASSWORD ? '[set]' : '[missing]'
+  })
   // 测试前连接 Redis
   beforeAll(async () => {
     await redisClient.connect()
@@ -334,7 +339,7 @@ describe('ConcurrencyManager', () => {
         enabled: true,
         maxConcurrency: 1,
         queueSize: 5,
-        queueTimeout: 1 // 1秒超时
+        queueTimeout: 2 // 2秒超时
       }
 
       // 第一个请求：占用槽位
@@ -347,8 +352,8 @@ describe('ConcurrencyManager', () => {
       ).rejects.toMatchObject({
         code: 'TIMEOUT',
         resourceId,
-        timeout: 1,
-        timeoutMs: 1000
+        timeout: 2,
+        timeoutMs: 2000
       })
 
       await release1()

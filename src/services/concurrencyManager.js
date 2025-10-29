@@ -73,6 +73,12 @@ class ConcurrencyManager {
     this.updateLocks = new Map()
 
     /**
+     * 记录各资源的配置信息，避免依赖 Bottleneck 内部私有属性
+     * Map<resourceId, { maxConcurrent: number, highWater: number }>
+     */
+    this.limiterSettings = new Map()
+
+    /**
      * 统计信息
      */
     this.stats = {
@@ -243,19 +249,18 @@ class ConcurrencyManager {
       connection: redisConnection,
       id: resourceId, // Redis key 前缀
       maxConcurrent: maxConcurrency,
-      highWater: queueSize,
+      highWater: queueSize === 0 ? -1 : queueSize,
       strategy: Bottleneck.strategy.BLOCK, // 队列满则拒绝
-
       // 租约超时（防止死锁）
       timeout: 300000 // 5 分钟
     }
 
-    // 设置等待超时
-    if (queueTimeout > 0) {
-      options.expiration = queueTimeout * 1000
-    }
-
-    return new Bottleneck(options)
+    const limiter = new Bottleneck(options)
+    this.limiterSettings.set(resourceId, {
+      maxConcurrent: maxConcurrency,
+      highWater: queueSize
+    })
+    return limiter
   }
 
   /**
@@ -270,9 +275,13 @@ class ConcurrencyManager {
    */
   async _updateLimiterConfig(limiter, resourceId, config) {
     const { maxConcurrency, queueSize } = config
+    const appliedQueueSize = queueSize === 0 ? -1 : queueSize
 
     // 🔍 第一次检查（无锁 - 快速路径）
-    const currentSettings = limiter.getSettings()
+    const currentSettings = this.limiterSettings.get(resourceId) || {
+      maxConcurrent: null,
+      highWater: null
+    }
     const needUpdate =
       currentSettings.maxConcurrent !== maxConcurrency || currentSettings.highWater !== queueSize
 
@@ -302,13 +311,21 @@ class ConcurrencyManager {
 
     try {
       // 🔍 第二次检查（有锁 - 确认状态未变）
-      const latestSettings = limiter.getSettings()
+      const latestSettings = this.limiterSettings.get(resourceId) || {
+        maxConcurrent: null,
+        highWater: null
+      }
       const stillNeedUpdate =
         latestSettings.maxConcurrent !== maxConcurrency || latestSettings.highWater !== queueSize
 
       if (stillNeedUpdate) {
         // ✅ 执行更新（原子操作）
         limiter.updateSettings({
+          maxConcurrent: maxConcurrency,
+          highWater: appliedQueueSize
+        })
+
+        this.limiterSettings.set(resourceId, {
           maxConcurrent: maxConcurrency,
           highWater: queueSize
         })
@@ -554,6 +571,7 @@ class ConcurrencyManager {
           `🗑️ Auto-disposed Bottleneck for ${resourceId} (reason: ${reason || 'unknown'})`
         )
       }
+      this.limiterSettings.delete(resourceId)
     } catch (error) {
       logger.error(`❌ Failed to dispose Bottleneck for ${resourceId}:`, error)
     }
@@ -572,7 +590,16 @@ class ConcurrencyManager {
     }
 
     const counts = await limiter.counts()
-    const settings = limiter.getSettings()
+    const settings = this.limiterSettings.get(resourceId)
+    if (!settings) {
+      return {
+        waiting: counts.QUEUED,
+        running: counts.RUNNING,
+        total: null,
+        free: null,
+        occupied: counts.RUNNING
+      }
+    }
 
     return {
       waiting: counts.QUEUED,
@@ -581,6 +608,15 @@ class ConcurrencyManager {
       free: settings.maxConcurrent - counts.RUNNING,
       occupied: counts.RUNNING
     }
+  }
+
+  /**
+   * 获取指定资源的并发配置
+   * @param {string} resourceId - 资源ID
+   * @returns {{maxConcurrent:number, highWater:number}|null}
+   */
+  getSettings(resourceId) {
+    return this.limiterSettings.get(resourceId) || null
   }
 
   /**
@@ -607,6 +643,7 @@ class ConcurrencyManager {
     const limiter = this.limiters.get(resourceId)
     if (limiter) {
       this.limiters.delete(resourceId)
+      this.limiterSettings.delete(resourceId)
       return true
     }
     return false
@@ -619,6 +656,7 @@ class ConcurrencyManager {
   clearAll() {
     const count = this.limiters.size
     this.limiters.clear()
+    this.limiterSettings.clear()
 
     logger.info(`🗑️ Cleared all ${count} Bottleneck instances`)
   }

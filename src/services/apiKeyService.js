@@ -153,16 +153,21 @@ class ApiKeyService {
 
     logger.success(`🔑 Generated new API key: ${name} (${keyId})`)
 
+    const parsedConcurrencyConfig = JSON.parse(
+      keyData.concurrencyConfig ||
+        '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+    )
+
     return {
       id: keyId,
       apiKey, // 只在创建时返回完整的key
       name: keyData.name,
       description: keyData.description,
       tokenLimit: parseInt(keyData.tokenLimit),
-      concurrencyConfig: JSON.parse(
-        keyData.concurrencyConfig ||
-          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
-      ),
+      concurrencyConfig: parsedConcurrencyConfig,
+      concurrencyLimit: parsedConcurrencyConfig.enabled
+        ? parsedConcurrencyConfig.maxConcurrency
+        : 0,
       rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
       rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
       rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -307,6 +312,16 @@ class ApiKeyService {
         tags = []
       }
 
+      const parsedConcurrencyConfig = JSON.parse(
+        keyData.concurrencyConfig ||
+          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+      )
+
+      const parsedConcurrencyConfig = JSON.parse(
+        keyData.concurrencyConfig ||
+          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+      )
+
       return {
         valid: true,
         keyData: {
@@ -324,10 +339,10 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyConfig: JSON.parse(
-            keyData.concurrencyConfig ||
-              '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
-          ),
+          concurrencyConfig: parsedConcurrencyConfig,
+          concurrencyLimit: parsedConcurrencyConfig.enabled
+            ? parsedConcurrencyConfig.maxConcurrency
+            : 0,
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -454,10 +469,10 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyConfig: JSON.parse(
-            keyData.concurrencyConfig ||
-              '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
-          ),
+          concurrencyConfig: parsedConcurrencyConfig,
+          concurrencyLimit: parsedConcurrencyConfig.enabled
+            ? parsedConcurrencyConfig.maxConcurrency
+            : 0,
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0),
@@ -518,6 +533,9 @@ class ApiKeyService {
             queueTimeout: 60
           }
         }
+        key.concurrencyLimit = key.concurrencyConfig.enabled
+          ? key.concurrencyConfig.maxConcurrency
+          : 0
         key.rateLimitWindow = parseInt(key.rateLimitWindow || 0)
         key.rateLimitRequests = parseInt(key.rateLimitRequests || 0)
         key.rateLimitCost = parseFloat(key.rateLimitCost || 0) // 新增：速率限制费用字段

@@ -3887,10 +3887,10 @@ const exportToExcel = () => {
 
         // 限制配置
         令牌限制: key.tokenLimit === '0' || key.tokenLimit === 0 ? '无限制' : key.tokenLimit || '',
-        并发限制:
-          key.concurrencyLimit === '0' || key.concurrencyLimit === 0
-            ? '无限制'
-            : key.concurrencyLimit || '',
+        并发控制:
+          key.concurrencyConfig && key.concurrencyConfig.enabled
+            ? `并发 ${key.concurrencyConfig.maxConcurrency} / 队列 ${key.concurrencyConfig.queueSize} / 超时 ${key.concurrencyConfig.queueTimeout}s`
+            : '未启用',
         '速率窗口(分钟)':
           key.rateLimitWindow === '0' || key.rateLimitWindow === 0
             ? '无限制'

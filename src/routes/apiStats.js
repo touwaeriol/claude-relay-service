@@ -135,11 +135,39 @@ router.post('/api/user-stats', async (req, res) => {
         allowedClients = []
       }
 
+      let concurrencyConfig
+      if (keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'string') {
+        try {
+          concurrencyConfig = JSON.parse(keyData.concurrencyConfig)
+        } catch (e) {
+          concurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 1,
+            queueSize: 0,
+            queueTimeout: 60
+          }
+        }
+      } else if (keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'object') {
+        concurrencyConfig = keyData.concurrencyConfig
+      } else {
+        concurrencyConfig = {
+          enabled: false,
+          maxConcurrency: 1,
+          queueSize: 0,
+          queueTimeout: 60
+        }
+      }
+
+      const derivedConcurrencyLimit = concurrencyConfig.enabled
+        ? concurrencyConfig.maxConcurrency
+        : 0
+
       // 格式化 keyData
       keyData = {
         ...keyData,
         tokenLimit: parseInt(keyData.tokenLimit) || 0,
-        concurrencyLimit: parseInt(keyData.concurrencyLimit) || 0,
+        concurrencyConfig,
+        concurrencyLimit: derivedConcurrencyLimit,
         rateLimitWindow: parseInt(keyData.rateLimitWindow) || 0,
         rateLimitRequests: parseInt(keyData.rateLimitRequests) || 0,
         dailyCostLimit: parseFloat(keyData.dailyCostLimit) || 0,
@@ -200,6 +228,22 @@ router.post('/api/user-stats', async (req, res) => {
 
     // 获取验证结果中的完整keyData（包含isActive状态和cost信息）
     const fullKeyData = keyData
+
+    const concurrencyConfig =
+      fullKeyData.concurrencyConfig && typeof fullKeyData.concurrencyConfig === 'object'
+        ? fullKeyData.concurrencyConfig
+        : {
+            enabled: false,
+            maxConcurrency: 1,
+            queueSize: 0,
+            queueTimeout: 60
+          }
+
+    const derivedConcurrencyLimit = concurrencyConfig.enabled
+      ? concurrencyConfig.maxConcurrency
+      : 0
+
+    const currentConcurrency = await redis.getConcurrency(keyId)
 
     // 计算总费用 - 使用与模型统计相同的逻辑（按模型分别计算）
     let totalCost = 0
@@ -416,7 +460,8 @@ router.post('/api/user-stats', async (req, res) => {
       // 限制信息（显示配置和当前使用量）
       limits: {
         tokenLimit: fullKeyData.tokenLimit || 0,
-        concurrencyLimit: fullKeyData.concurrencyLimit || 0,
+        concurrencyLimit: derivedConcurrencyLimit,
+        concurrencyConfig,
         rateLimitWindow: fullKeyData.rateLimitWindow || 0,
         rateLimitRequests: fullKeyData.rateLimitRequests || 0,
         rateLimitCost: parseFloat(fullKeyData.rateLimitCost) || 0, // 新增：费用限制
@@ -427,6 +472,7 @@ router.post('/api/user-stats', async (req, res) => {
         currentWindowRequests,
         currentWindowTokens,
         currentWindowCost, // 新增：当前窗口费用
+        currentConcurrency,
         currentDailyCost,
         currentTotalCost: totalCost,
         weeklyOpusCost: (await redis.getWeeklyOpusCost(keyId)) || 0, // 当前 Opus 周费用

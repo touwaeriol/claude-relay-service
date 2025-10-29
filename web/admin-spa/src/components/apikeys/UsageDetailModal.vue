@@ -195,13 +195,19 @@
               </div>
 
               <div
-                v-if="apiKey.concurrencyLimit > 0"
-                class="flex items-center justify-between rounded-lg border border-purple-200/70 bg-white/60 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
+                v-if="concurrencyConfig.enabled"
+                class="space-y-1 rounded-lg border border-purple-200/70 bg-white/60 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
               >
-                <span class="text-gray-600 dark:text-gray-300">并发限制</span>
-                <span class="font-semibold text-purple-600 dark:text-purple-300">
-                  {{ apiKey.currentConcurrency || 0 }} / {{ apiKey.concurrencyLimit }}
-                </span>
+                <div class="flex items-center justify-between">
+                  <span class="text-gray-600 dark:text-gray-300">并发限制</span>
+                  <span class="font-semibold text-purple-600 dark:text-purple-300">
+                    {{ apiKey.currentConcurrency || 0 }} / {{ concurrencyConfig.maxConcurrency }}
+                  </span>
+                </div>
+                <div class="flex flex-wrap gap-3 text-xs text-purple-500 dark:text-purple-300">
+                  <span>队列 {{ concurrencyConfig.queueSize }}</span>
+                  <span>超时 {{ concurrencyConfig.queueTimeout }} 秒</span>
+                </div>
               </div>
 
               <div v-if="apiKey.rateLimitWindow > 0" class="space-y-2">
@@ -275,11 +281,34 @@ const cacheReadTokens = computed(() => props.apiKey.usage?.total?.cacheReadToken
 const rpm = computed(() => props.apiKey.usage?.averages?.rpm || 0)
 const tpm = computed(() => props.apiKey.usage?.averages?.tpm || 0)
 
+const concurrencyConfig = computed(() => {
+  const raw = props.apiKey.concurrencyConfig
+  if (raw && typeof raw === 'object') {
+    const maxConcurrency = Number(raw.maxConcurrency)
+    const queueSize = Number(raw.queueSize)
+    const queueTimeout = Number(raw.queueTimeout)
+
+    return {
+      enabled: !!raw.enabled,
+      maxConcurrency: Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : 1,
+      queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? queueSize : 0,
+      queueTimeout: Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 60
+    }
+  }
+
+  return {
+    enabled: false,
+    maxConcurrency: 1,
+    queueSize: 0,
+    queueTimeout: 60
+  }
+})
+
 const hasLimits = computed(() => {
   return (
     props.apiKey.dailyCostLimit > 0 ||
     props.apiKey.totalCostLimit > 0 ||
-    props.apiKey.concurrencyLimit > 0 ||
+    concurrencyConfig.value.enabled ||
     props.apiKey.weeklyOpusCostLimit > 0 ||
     props.apiKey.rateLimitWindow > 0 ||
     props.apiKey.tokenLimit > 0
