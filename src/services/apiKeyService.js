@@ -312,15 +312,25 @@ class ApiKeyService {
         tags = []
       }
 
-      const parsedConcurrencyConfig = JSON.parse(
-        keyData.concurrencyConfig ||
-          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
-      )
-
-      const parsedConcurrencyConfig = JSON.parse(
-        keyData.concurrencyConfig ||
-          '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
-      )
+      // 解析并发控制配置（只解析一次，复用结果）
+      let parsedConcurrencyConfig
+      try {
+        parsedConcurrencyConfig = JSON.parse(
+          keyData.concurrencyConfig ||
+            '{"enabled":false,"maxConcurrency":1,"queueSize":0,"queueTimeout":60}'
+        )
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse concurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedConcurrencyConfig = {
+          enabled: false,
+          maxConcurrency: 1,
+          queueSize: 0,
+          queueTimeout: 60
+        }
+      }
 
       return {
         valid: true,

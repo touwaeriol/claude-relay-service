@@ -5630,6 +5630,24 @@ watch(
         enableRateLimit:
           newAccount.rateLimitDuration && newAccount.rateLimitDuration > 0 ? true : false,
         rateLimitDuration: newAccount.rateLimitDuration || 60,
+        // 并发控制相关字段
+        enableConcurrencyControl: extractConcurrencyEnabled(newAccount.concurrencyControl),
+        maxConcurrency: extractConcurrencyValue(newAccount.concurrencyControl, 'maxConcurrency', 10),
+        queueSize: extractConcurrencyValue(newAccount.concurrencyControl, 'queueSize', 20),
+        queueTimeout: Math.max(
+          1,
+          extractConcurrencyValue(newAccount.concurrencyControl, 'queueTimeout', 120)
+        ),
+        // 会话并发控制相关字段
+        enableSessionConcurrencyControl: extractConcurrencyEnabled(
+          newAccount.sessionConcurrencyConfig
+        ),
+        maxSessions: extractConcurrencyValue(newAccount.sessionConcurrencyConfig, 'maxSessions', 10),
+        windowSeconds: extractConcurrencyValue(
+          newAccount.sessionConcurrencyConfig,
+          'windowSeconds',
+          3600
+        ),
         // Bedrock 特定字段
         accessKeyId: '', // 编辑模式不显示现有的访问密钥
         secretAccessKey: '', // 编辑模式不显示现有的秘密密钥

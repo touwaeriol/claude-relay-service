@@ -310,6 +310,45 @@ class ClaudeConsoleAccountService {
           // 获取限流状态信息
           const rateLimitInfo = this._getRateLimitInfo(accountData)
 
+          const defaultConcurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 10,
+            queueSize: 20,
+            queueTimeout: 120
+          }
+          const defaultSessionConfig = {
+            enabled: false,
+            maxSessions: 10,
+            windowSeconds: 3600
+          }
+
+          let parsedConcurrencyControl = defaultConcurrencyConfig
+          if (accountData.concurrencyControl) {
+            try {
+              parsedConcurrencyControl = JSON.parse(accountData.concurrencyControl)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse concurrencyControl for Claude Console account ${accountData.id}: ${error.message}`
+              )
+              parsedConcurrencyControl = defaultConcurrencyConfig
+            }
+          }
+
+          let parsedSessionConcurrencyConfig = defaultSessionConfig
+          if (accountData.sessionConcurrencyConfig) {
+            try {
+              parsedSessionConcurrencyConfig = JSON.parse(accountData.sessionConcurrencyConfig)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse sessionConcurrencyConfig for Claude Console account ${accountData.id}: ${error.message}`
+              )
+              parsedSessionConcurrencyConfig = defaultSessionConfig
+            }
+          }
+
+          const enableMessageDigest =
+            accountData.enableMessageDigest === 'true' || accountData.enableMessageDigest === true
+
           accounts.push({
             id: accountData.id,
             platform: accountData.platform,
@@ -340,7 +379,10 @@ class ClaudeConsoleAccountService {
             dailyUsage: parseFloat(accountData.dailyUsage || '0'),
             lastResetDate: accountData.lastResetDate || '',
             quotaResetTime: accountData.quotaResetTime || '00:00',
-            quotaStoppedAt: accountData.quotaStoppedAt || null
+            quotaStoppedAt: accountData.quotaStoppedAt || null,
+            enableMessageDigest,
+            concurrencyControl: parsedConcurrencyControl,
+            sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           })
         }
       }

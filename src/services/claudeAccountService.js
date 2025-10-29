@@ -641,6 +641,45 @@ class ClaudeAccountService {
           const authType = isOAuth ? 'oauth' : 'setup-token'
           const parsedExtInfo = this._safeParseJson(account.extInfo)
 
+          const defaultConcurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 10,
+            queueSize: 20,
+            queueTimeout: 120
+          }
+          const defaultSessionConfig = {
+            enabled: false,
+            maxSessions: 10,
+            windowSeconds: 3600
+          }
+
+          let parsedConcurrencyControl = defaultConcurrencyConfig
+          if (account.concurrencyControl) {
+            try {
+              parsedConcurrencyControl = JSON.parse(account.concurrencyControl)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse concurrencyControl for Claude account ${account.id}: ${error.message}`
+              )
+              parsedConcurrencyControl = defaultConcurrencyConfig
+            }
+          }
+
+          let parsedSessionConcurrencyConfig = defaultSessionConfig
+          if (account.sessionConcurrencyConfig) {
+            try {
+              parsedSessionConcurrencyConfig = JSON.parse(account.sessionConcurrencyConfig)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse sessionConcurrencyConfig for Claude account ${account.id}: ${error.message}`
+              )
+              parsedSessionConcurrencyConfig = defaultSessionConfig
+            }
+          }
+
+          const enableMessageDigest =
+            account.enableMessageDigest === 'true' || account.enableMessageDigest === true
+
           return {
             id: account.id,
             name: account.name,
@@ -707,7 +746,10 @@ class ClaudeAccountService {
             // 扩展信息
             extInfo: parsedExtInfo,
             exclusiveSessionOnly:
-              account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true
+              account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true,
+            enableMessageDigest,
+            concurrencyControl: parsedConcurrencyControl,
+            sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           }
         })
       )

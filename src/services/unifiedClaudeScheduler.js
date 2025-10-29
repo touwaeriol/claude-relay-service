@@ -95,6 +95,23 @@ class UnifiedClaudeScheduler {
       filtered.push(account)
     }
 
+    // 如果过滤后没有可用账户，提供清晰的错误信息
+    if (filtered.length === 0 && accounts.length > 0) {
+      const allExclusive = accounts.every(
+        (a) => a.exclusiveSessionOnly === true || a.exclusiveSessionOnly === 'true'
+      )
+
+      if (allExclusive && !isNewSession) {
+        logger.error(
+          `🚫 All ${accounts.length} candidate accounts are exclusive, but session validation failed. ` +
+            `Session hash: ${sessionHash.substring(0, 8)}... | ` +
+            `Sticky binding: ${stickyAccountId ? stickyAccountId.substring(0, 8) + '...' : 'none'} | ` +
+            `This typically happens after Redis restart or session expiration (TTL: 7 days). ` +
+            `User should start a new conversation.`
+        )
+      }
+    }
+
     return filtered
   }
 
