@@ -37,7 +37,10 @@ const config = {
     // 粘性会话TTL配置（小时），默认7天（168小时）
     stickyTtlHours: parseFloat(process.env.STICKY_SESSION_TTL_HOURS) || 168,
     // 续期阈值（分钟），默认0分钟（不续期）
-    renewalThresholdMinutes: parseInt(process.env.STICKY_SESSION_RENEWAL_THRESHOLD_MINUTES) || 0
+    renewalThresholdMinutes: parseInt(process.env.STICKY_SESSION_RENEWAL_THRESHOLD_MINUTES) || 0,
+    // 会话ID重写命名空间（UUID v5 namespace），用于可选的会话ID替换功能
+    rewriteNamespaceUuid:
+      process.env.SESSION_REWRITE_NAMESPACE_UUID || '6ba7b812-9dad-11d1-80b4-00c04fd430c8'
   },
 
   // 🎯 Claude API配置

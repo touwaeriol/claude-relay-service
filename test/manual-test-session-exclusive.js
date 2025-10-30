@@ -1,5 +1,5 @@
 /**
- * 手动测试：会话独占功能
+ * 手动测试：会话粘性绑定功能
  *
  * 运行方式：node test/manual-test-session-exclusive.js
  */

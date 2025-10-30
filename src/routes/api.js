@@ -100,6 +100,19 @@ async function handleMessagesRequest(req, res) {
       }
     }
 
+    const sessionId = req.body?.session_id || req.headers['session_id'] || null
+    try {
+      const serializedBody = JSON.stringify(req.body, null, 2)
+      logger.info(
+        `🧾 Full /api/v1/messages payload (session: ${sessionId || 'null'})\n${serializedBody}`
+      )
+    } catch (serializationError) {
+      logger.warn('⚠️ Failed to serialize /api/v1/messages payload', {
+        sessionId,
+        error: serializationError?.message || serializationError
+      })
+    }
+
     // 检查是否为流式请求
     const isStream = req.body.stream === true
 

@@ -137,8 +137,7 @@ class ClaudeAccountService {
       useUnifiedClientId = false, // 是否使用统一的客户端标识
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
-      exclusiveSessionOnly = false, // 是否只允许处理自身会话
-      enableMessageDigest = false, // 是否启用消息摘要验证
+      rewriteSessionId = false, // 是否重写会话ID
       extInfo = null, // 额外扩展信息
       // 并发控制配置（对象）
       concurrencyControl = null, // { enabled, maxConcurrency, queueSize, queueTimeout }
@@ -151,8 +150,11 @@ class ClaudeAccountService {
     let accountData
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
 
-    const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
-    const digestEnabled = enableMessageDigest === true || enableMessageDigest === 'true'
+    const unifiedClientEnabled = useUnifiedClientId === true || useUnifiedClientId === 'true'
+    const rewriteSessionIdEnabled =
+      platform === 'claude' &&
+      unifiedClientEnabled &&
+      (rewriteSessionId === true || rewriteSessionId === 'true')
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -180,7 +182,7 @@ class ClaudeAccountService {
         schedulable: schedulable.toString(), // 是否可被调度
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
-        useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
+        useUnifiedClientId: unifiedClientEnabled.toString(), // 是否使用统一的客户端标识
         unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 优先使用手动设置的订阅信息，否则使用OAuth数据中的，否则默认为空
         subscriptionInfo: subscriptionInfo
@@ -192,8 +194,7 @@ class ClaudeAccountService {
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
-        exclusiveSessionOnly: exclusiveEnabled.toString(),
-        enableMessageDigest: digestEnabled.toString(),
+        rewriteSessionId: rewriteSessionIdEnabled.toString(),
         // 并发控制配置（JSON 对象）
         concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
         // 会话并发控制配置（JSON 对象）
@@ -226,7 +227,7 @@ class ClaudeAccountService {
         schedulable: schedulable.toString(), // 是否可被调度
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
-        useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
+        useUnifiedClientId: unifiedClientEnabled.toString(), // 是否使用统一的客户端标识
         unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 手动设置的订阅信息
         subscriptionInfo: subscriptionInfo ? JSON.stringify(subscriptionInfo) : '',
@@ -234,8 +235,7 @@ class ClaudeAccountService {
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
         extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
-        exclusiveSessionOnly: exclusiveEnabled.toString(),
-        enableMessageDigest: digestEnabled.toString(),
+        rewriteSessionId: rewriteSessionIdEnabled.toString(),
         // 并发控制配置（JSON 对象）
         concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
         // 会话并发控制配置（JSON 对象）
@@ -287,9 +287,9 @@ class ClaudeAccountService {
       scopes: claudeAiOauth ? claudeAiOauth.scopes : [],
       autoStopOnWarning,
       useUnifiedUserAgent,
-      useUnifiedClientId,
+      useUnifiedClientId: unifiedClientEnabled,
       unifiedClientId,
-      exclusiveSessionOnly: exclusiveEnabled,
+      rewriteSessionId: rewriteSessionIdEnabled,
       extInfo: normalizedExtInfo
     }
   }
@@ -620,9 +620,6 @@ class ClaudeAccountService {
             }
           }
 
-          const enableMessageDigest =
-            account.enableMessageDigest === 'true' || account.enableMessageDigest === true
-
           return {
             id: account.id,
             name: account.name,
@@ -684,13 +681,11 @@ class ClaudeAccountService {
             // 添加统一客户端标识设置
             useUnifiedClientId: account.useUnifiedClientId === 'true', // 默认为false
             unifiedClientId: account.unifiedClientId || '', // 统一的客户端标识
+            rewriteSessionId: account.platform === 'claude' && account.rewriteSessionId === 'true',
             // 添加停止原因
             stoppedReason: account.stoppedReason || null,
             // 扩展信息
             extInfo: parsedExtInfo,
-            exclusiveSessionOnly:
-              account.exclusiveSessionOnly === 'true' || account.exclusiveSessionOnly === true,
-            enableMessageDigest,
             concurrencyControl: parsedConcurrencyControl,
             sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           }
@@ -783,10 +778,9 @@ class ClaudeAccountService {
         'useUnifiedUserAgent',
         'useUnifiedClientId',
         'unifiedClientId',
+        'rewriteSessionId',
         'subscriptionExpiresAt',
         'extInfo',
-        'exclusiveSessionOnly',
-        'enableMessageDigest',
         // 并发控制配置（对象）
         'concurrencyControl',
         // 会话并发控制配置（对象）
@@ -795,10 +789,6 @@ class ClaudeAccountService {
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
       let extInfoProvided = false
-      let exclusiveFlag =
-        accountData.exclusiveSessionOnly === undefined
-          ? false
-          : accountData.exclusiveSessionOnly === 'true' || accountData.exclusiveSessionOnly === true
 
       // 检查是否新增了 refresh token
       const oldRefreshToken = this._decryptSensitiveData(accountData.refreshToken)
@@ -840,13 +830,9 @@ class ClaudeAccountService {
                 }
               }
             }
-          } else if (field === 'exclusiveSessionOnly') {
-            exclusiveFlag = value === true || value === 'true'
-            updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
-          } else if (field === 'enableMessageDigest') {
-            // 处理消息摘要验证开关，确保只有在 exclusiveSessionOnly 为 true 时才能启用
-            const digestFlag = value === true || value === 'true'
-            updatedData.enableMessageDigest = digestFlag.toString()
+          } else if (field === 'rewriteSessionId') {
+            const rewriteFlag = value === true || value === 'true'
+            updatedData.rewriteSessionId = rewriteFlag.toString()
           } else if (field === 'concurrencyControl') {
             // 处理并发控制配置
             updatedData[field] = JSON.stringify(this._normalizeConcurrencyControl(value))
@@ -859,12 +845,20 @@ class ClaudeAccountService {
         }
       }
 
-      // 设置 exclusiveSessionOnly 标志
-      updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
+      const platformIsClaude = (accountData.platform || '').toLowerCase() === 'claude'
+      const unifiedClientEnabledFinal =
+        updatedData.useUnifiedClientId === 'true' || updatedData.useUnifiedClientId === true
 
-      // 如果 exclusiveSessionOnly 为 false，强制 enableMessageDigest 为 false
-      if (!exclusiveFlag) {
-        updatedData.enableMessageDigest = 'false'
+      if (!platformIsClaude || !unifiedClientEnabledFinal) {
+        updatedData.rewriteSessionId = 'false'
+      } else if (Object.prototype.hasOwnProperty.call(updates, 'rewriteSessionId')) {
+        const rewriteFlag = updates.rewriteSessionId === true || updates.rewriteSessionId === 'true'
+        updatedData.rewriteSessionId = rewriteFlag.toString()
+      } else {
+        updatedData.rewriteSessionId =
+          updatedData.rewriteSessionId === 'true' || updatedData.rewriteSessionId === true
+            ? 'true'
+            : 'false'
       }
 
       // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟

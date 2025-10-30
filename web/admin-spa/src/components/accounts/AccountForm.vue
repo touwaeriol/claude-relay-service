@@ -1577,7 +1577,7 @@
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                   </p>
-                  <div v-if="form.useUnifiedClientId" class="mt-3">
+                  <div v-if="form.useUnifiedClientId" class="mt-3 space-y-3">
                     <div
                       class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
                     >
@@ -1614,53 +1614,28 @@
                         此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
                       </p>
                     </div>
+                    <label class="flex items-start">
+                      <input
+                        v-model="form.rewriteSessionId"
+                        class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                        type="checkbox"
+                      />
+                      <div class="ml-3">
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                          替换会话 ID
+                        </span>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          开启后，将基于账户和会话信息生成新的 session UUID，避免相同会话在不同账户上复用同一个 ID。
+                        </p>
+                      </div>
+                    </label>
                   </div>
                 </div>
               </label>
             </div>
 
-            <!-- 独占会话配置（创建模式） -->
-            <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
-              <!-- 禁止跨账号调度 -->
-              <label class="flex items-start">
-                <input
-                  v-model="form.exclusiveSessionOnly"
-                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                  type="checkbox"
-                />
-                <div class="ml-3 flex-1">
-                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    禁止跨账号调度
-                  </span>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    开启后仅允许调度本账号的新会话或已绑定会话（会话绑定保留7天）。
-                  </p>
-                </div>
-              </label>
-
-              <!-- 校验会话摘要 -->
-              <div
-                v-if="form.exclusiveSessionOnly"
-                class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
-              >
-                <label class="flex items-start">
-                  <input
-                    v-model="form.enableMessageDigest"
-                    class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                    type="checkbox"
-                  />
-                  <div class="ml-3 flex-1">
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      校验会话摘要
-                    </span>
-                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
-                    </p>
-                  </div>
-                </label>
-              </div>
-
-              <!-- 并发控制配置 (仅 Claude Code/Console 账户) -->
+            <!-- 并发控制配置（创建模式） -->
+            <div v-if="supportsConcurrencyConfig" class="mt-4 space-y-4">
               <ConcurrencyConfigCard
                 v-model="concurrencyConfig"
                 description="启用后，限制该账户的最大并发请求数和队列长度"
@@ -1673,7 +1648,6 @@
                 title="启用并发控制"
               />
 
-              <!-- 会话并发控制配置 (仅 Claude Code/Console 账户) -->
               <SessionConcurrencyConfigCard
                 v-model="sessionConcurrencyConfig"
                 :show-claude-only-note="false"
@@ -2445,7 +2419,7 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                 </p>
-                <div v-if="form.useUnifiedClientId" class="mt-3">
+                <div v-if="form.useUnifiedClientId" class="mt-3 space-y-3">
                   <div
                     class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
                   >
@@ -2482,53 +2456,28 @@
                       此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
                     </p>
                   </div>
+                  <label class="flex items-start">
+                    <input
+                      v-model="form.rewriteSessionId"
+                      class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                      type="checkbox"
+                    />
+                    <div class="ml-3">
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        替换会话 ID
+                      </span>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        开启后，将基于账户和会话信息生成新的 session UUID，避免相同会话在不同账户上复用同一个 ID。
+                      </p>
+                    </div>
+                  </label>
                 </div>
               </div>
             </label>
           </div>
 
-          <!-- 独占会话配置（编辑模式） -->
-          <div v-if="supportsExclusiveSessions" class="mt-4 space-y-4">
-            <!-- 禁止跨账号调度 -->
-            <label class="flex items-start">
-              <input
-                v-model="form.exclusiveSessionOnly"
-                class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                type="checkbox"
-              />
-              <div class="ml-3 flex-1">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  禁止跨账号调度
-                </span>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  开启后仅允许调度本账号的新会话或已绑定会话（会话绑定保留7天）。
-                </p>
-              </div>
-            </label>
-
-            <!-- 校验会话摘要 -->
-            <div
-              v-if="form.exclusiveSessionOnly"
-              class="ml-6 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-700 dark:bg-blue-900/30"
-            >
-              <label class="flex items-start">
-                <input
-                  v-model="form.enableMessageDigest"
-                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                  type="checkbox"
-                />
-                <div class="ml-3 flex-1">
-                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    校验会话摘要
-                  </span>
-                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    开启后将对会话消息进行摘要校验，防止会话被篡改。会话摘要保留时间与全局粘性会话配置一致。
-                  </p>
-                </div>
-              </label>
-            </div>
-
-            <!-- 并发控制配置 (仅 Claude Code/Console 账户，编辑模式) -->
+          <!-- 并发控制配置（编辑模式） -->
+          <div v-if="supportsConcurrencyConfig" class="mt-4 space-y-4">
             <ConcurrencyConfigCard
               v-model="concurrencyConfig"
               description="启用后，限制该账户的最大并发请求数和队列长度"
@@ -2541,7 +2490,6 @@
               title="启用并发控制"
             />
 
-            <!-- 会话并发控制配置 (仅 Claude Code/Console 账户，编辑模式) -->
             <SessionConcurrencyConfigCard
               v-model="sessionConcurrencyConfig"
               :show-claude-only-note="false"
@@ -3686,12 +3634,10 @@ const form = ref({
   useUnifiedUserAgent: props.account?.useUnifiedUserAgent || false, // 使用统一Claude Code版本
   useUnifiedClientId: props.account?.useUnifiedClientId || false, // 使用统一的客户端标识
   unifiedClientId: props.account?.unifiedClientId || '', // 统一的客户端标识
-  exclusiveSessionOnly:
-    props.account?.exclusiveSessionOnly !== undefined
-      ? !!props.account?.exclusiveSessionOnly
+  rewriteSessionId:
+    props.account?.rewriteSessionId !== undefined
+      ? !!props.account?.rewriteSessionId
       : false,
-  enableMessageDigest:
-    props.account?.enableMessageDigest !== undefined ? !!props.account?.enableMessageDigest : false,
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3831,10 +3777,10 @@ const commonModels = [
 // 模型映射表数据
 const modelMappings = ref([])
 
-// 判断是否支持独占会话配置（Claude 平台所有账户类型均支持）
-const supportsExclusiveSessions = computed(() => {
-  // Claude 平台（包括 OAuth、Setup Token）和 Claude Console 平台都支持独占会话
-  // CCR 等其他平台不支持
+// 判断是否支持并发控制配置的显示范围
+const supportsConcurrencyConfig = computed(() => {
+  // Claude 平台（包括 OAuth、Setup Token）和 Claude Console 平台支持可视化并发配置
+  // CCR 等其他平台暂不开放 UI 设置
   return form.value.platform === 'claude' || form.value.platform === 'claude-console'
 })
 
@@ -4281,6 +4227,8 @@ const handleOAuthSuccess = async (tokenInfo) => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId =
+        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4301,10 +4249,6 @@ const handleOAuthSuccess = async (tokenInfo) => {
         maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
         windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
-      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.enableMessageDigest = form.value.exclusiveSessionOnly
-        ? !!form.value.enableMessageDigest
-        : false
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
       data.geminiOauth = tokenInfo.tokens || tokenInfo
@@ -4602,6 +4546,8 @@ const createAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId =
+        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4706,10 +4652,6 @@ const createAccount = async () => {
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
-      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.enableMessageDigest = form.value.exclusiveSessionOnly
-        ? !!form.value.enableMessageDigest
-        : false
       // 添加并发控制配置
       data.concurrencyControl = {
         enabled: !!form.value.enableConcurrencyControl,
@@ -4992,6 +4934,8 @@ const updateAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId =
+        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
       // 更新订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4999,10 +4943,6 @@ const updateAccount = async () => {
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
       }
-      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.enableMessageDigest = form.value.exclusiveSessionOnly
-        ? !!form.value.enableMessageDigest
-        : false
       // 并发控制配置
       data.concurrencyControl = {
         enabled: !!form.value.enableConcurrencyControl,
@@ -5042,11 +4982,6 @@ const updateAccount = async () => {
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
-      // 会话管理字段
-      data.exclusiveSessionOnly = !!form.value.exclusiveSessionOnly
-      data.enableMessageDigest = form.value.exclusiveSessionOnly
-        ? !!form.value.enableMessageDigest
-        : false
       // 并发控制配置
       data.concurrencyControl = {
         enabled: !!form.value.enableConcurrencyControl,
@@ -5477,6 +5412,18 @@ watch(
     if (!isEdit.value) {
       emit('platform-changed', newPlatform)
     }
+    if (newPlatform !== 'claude') {
+      form.value.rewriteSessionId = false
+    }
+  }
+)
+
+watch(
+  () => form.value.useUnifiedClientId,
+  (enabled) => {
+    if (!enabled) {
+      form.value.rewriteSessionId = false
+    }
   }
 )
 
@@ -5604,10 +5551,8 @@ watch(
         useUnifiedUserAgent: newAccount.useUnifiedUserAgent || false,
         useUnifiedClientId: newAccount.useUnifiedClientId || false,
         unifiedClientId: newAccount.unifiedClientId || '',
-        exclusiveSessionOnly:
-          newAccount.exclusiveSessionOnly !== undefined ? !!newAccount.exclusiveSessionOnly : false,
-        enableMessageDigest:
-          newAccount.enableMessageDigest !== undefined ? !!newAccount.enableMessageDigest : false,
+        rewriteSessionId:
+          newAccount.rewriteSessionId !== undefined ? !!newAccount.rewriteSessionId : false,
         groupId: groupId,
         groupIds: [],
         projectId: newAccount.projectId || '',
@@ -5796,6 +5741,8 @@ const handleUnifiedClientIdChange = () => {
     if (!form.value.unifiedClientId) {
       form.value.unifiedClientId = generateClientId()
     }
+  } else {
+    form.value.rewriteSessionId = false
   }
 }
 
@@ -5878,16 +5825,6 @@ watch(
   (newPlatform) => {
     if (newPlatform === 'claude') {
       fetchUnifiedUserAgent()
-    }
-  }
-)
-
-// 监听 exclusiveSessionOnly 变化，关闭时自动关闭 enableMessageDigest
-watch(
-  () => form.value.exclusiveSessionOnly,
-  (newValue) => {
-    if (!newValue && form.value.enableMessageDigest) {
-      form.value.enableMessageDigest = false
     }
   }
 )

@@ -1,7 +1,6 @@
 const redis = require('../models/redis')
 const config = require('../../config/config')
 const logger = require('./logger')
-const messageDigestHelper = require('./messageDigest')
 
 /**
  * 构建会话上下文
@@ -24,25 +23,11 @@ async function buildSessionContext(sessionHash, requestBody) {
   }
 
   let stickyAccountId = null
-  let digestExists = false
-
   if (sessionHash) {
     try {
       stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
     } catch (error) {
       logger.warn('⚠️ Failed to read sticky session mapping when building context:', error)
-    }
-
-    if (stickyAccountId) {
-      try {
-        const redisClient = redis.getClient()
-        if (redisClient) {
-          const digestKey = messageDigestHelper.getDigestRedisKey(stickyAccountId, sessionHash)
-          digestExists = (await redisClient.exists(digestKey)) === 1
-        }
-      } catch (error) {
-        logger.warn('⚠️ Failed to inspect session digest presence:', error)
-      }
     }
   }
 
@@ -61,43 +46,32 @@ async function buildSessionContext(sessionHash, requestBody) {
     Boolean(requestBody?.session_id) ||
     Boolean(requestBody?.sessionId)
 
-  const hasSessionArtifacts = Boolean(stickyAccountId) || digestExists
-  const shouldTreatAsExisting =
-    explicitResumeIndicators || (requestCarriesSessionInfo && hasSessionArtifacts)
+  const hasSessionArtifacts = Boolean(stickyAccountId)
+  const resumeRequested = Boolean(
+    explicitResumeIndicators || (hasSessionArtifacts && requestCarriesSessionInfo)
+  )
+  const shouldTreatAsExisting = hasSessionArtifacts || resumeRequested || requestCarriesSessionInfo
 
-  const isNewSession = !shouldTreatAsExisting && hasOnlyUserMessages && !hasSessionArtifacts
+  const isNewSession = !shouldTreatAsExisting && hasOnlyUserMessages
 
   logger.debug(
     `🧭 Session context resolved: session=${sessionHash ? sessionHash.substring(0, 8) + '...' : 'none'}, ` +
-      `new=${isNewSession}, sticky=${stickyAccountId ? stickyAccountId.substring(0, 8) + '...' : 'none'}, digest=${digestExists}`
+      `new=${isNewSession}, sticky=${stickyAccountId ? stickyAccountId.substring(0, 8) + '...' : 'none'}`
   )
 
   return {
     sessionHash,
-    isNewSession,
-    requestBody, // ✅ 保留原始请求体，用于摘要验证
-    digestValidationCache: {} // 🚀 摘要验证缓存，避免重复验证 { accountId: { valid, shouldClearBinding, action } }
+    isNewSession
   }
 }
 
 /**
  * 为账户注册会话（建立粘性会话绑定）
- * 默认仅在旧会话时建立绑定，但对独占账户在首个请求即绑定并初始化消息摘要
- *
  * @param {Object} selection - 账户选择结果 { accountId, accountType, account }
  * @param {Object} sessionContext - 会话上下文 { sessionHash, isNewSession }
  */
 async function registerSessionForAccount(selection, sessionContext) {
   if (!sessionContext?.sessionHash) {
-    return
-  }
-
-  const accountInfo = selection?.account || {}
-  const isExclusive =
-    accountInfo?.exclusiveSessionOnly === true || accountInfo?.exclusiveSessionOnly === 'true'
-
-  if (!isExclusive && sessionContext.isNewSession) {
-    // 非独占账户保持原有行为：等待会话进入对话阶段后再绑定
     return
   }
 
@@ -127,30 +101,6 @@ async function registerSessionForAccount(selection, sessionContext) {
     logger.debug(
       `✅ Registered session ${sessionContext.sessionHash.substring(0, 8)}... to account ${accountId.substring(0, 8)}... (TTL: ${stickyTtlHours}h)`
     )
-
-    // 对启用摘要验证的独占账户，在首个请求时初始化摘要，确保后续消息可以校验
-    const digestEnabled =
-      accountInfo?.enableMessageDigest === true || accountInfo?.enableMessageDigest === 'true'
-    const messages = sessionContext?.requestBody?.messages
-
-    if (isExclusive && digestEnabled && Array.isArray(messages) && messages.length > 0) {
-      try {
-        const digestResult = await messageDigestHelper.validateAndStoreDigest(
-          accountId,
-          sessionContext.sessionHash,
-          messages,
-          { allowCreate: true }
-        )
-
-        if (!digestResult.valid) {
-          logger.warn(
-            `📋 Failed to initialize digest for exclusive session ${sessionContext.sessionHash.substring(0, 8)}...: ${digestResult.reason}`
-          )
-        }
-      } catch (error) {
-        logger.error('❌ Failed to initialize session digest:', error)
-      }
-    }
   } catch (error) {
     logger.error('❌ Failed to register session for account:', error)
   }

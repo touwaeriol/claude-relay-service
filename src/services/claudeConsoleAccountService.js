@@ -129,9 +129,6 @@ class ClaudeConsoleAccountService {
       schedulable = true, // 是否可被调度
       dailyQuota = 0, // 每日额度限制（美元），0表示不限制
       quotaResetTime = '00:00', // 额度重置时间（HH:mm格式）
-      // 🔒 独占会话和并发控制
-      exclusiveSessionOnly = false, // 是否只允许处理自身会话
-      enableMessageDigest = false, // 是否启用消息摘要验证
       concurrencyControl = null, // 并发控制配置（对象）
       sessionConcurrencyConfig = null // 会话并发控制配置（对象）
     } = options
@@ -145,10 +142,6 @@ class ClaudeConsoleAccountService {
 
     // 处理 supportedModels，确保向后兼容
     const processedModels = this._processModelMapping(supportedModels)
-
-    // 处理独占会话和摘要验证标志
-    const exclusiveEnabled = exclusiveSessionOnly === true || exclusiveSessionOnly === 'true'
-    const digestEnabled = enableMessageDigest === true || enableMessageDigest === 'true'
 
     const accountData = {
       id: accountId,
@@ -186,9 +179,6 @@ class ClaudeConsoleAccountService {
       quotaResetTime, // 额度重置时间
       quotaStoppedAt: '', // 因额度停用的时间
 
-      // 🔒 独占会话和摘要验证
-      exclusiveSessionOnly: exclusiveEnabled.toString(),
-      enableMessageDigest: digestEnabled.toString(),
       // 并发控制配置（JSON 对象）
       concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
       // 会话并发控制配置（JSON 对象）
@@ -289,9 +279,6 @@ class ClaudeConsoleAccountService {
             }
           }
 
-          const enableMessageDigest =
-            accountData.enableMessageDigest === 'true' || accountData.enableMessageDigest === true
-
           accounts.push({
             id: accountData.id,
             platform: accountData.platform,
@@ -323,7 +310,6 @@ class ClaudeConsoleAccountService {
             lastResetDate: accountData.lastResetDate || '',
             quotaResetTime: accountData.quotaResetTime || '00:00',
             quotaStoppedAt: accountData.quotaStoppedAt || null,
-            enableMessageDigest,
             concurrencyControl: parsedConcurrencyControl,
             sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           })
@@ -485,25 +471,6 @@ class ClaudeConsoleAccountService {
         } else {
           await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
         }
-      }
-
-      // 🔒 处理独占会话配置
-      if (updates.exclusiveSessionOnly !== undefined) {
-        const exclusiveFlag =
-          updates.exclusiveSessionOnly === true || updates.exclusiveSessionOnly === 'true'
-        updatedData.exclusiveSessionOnly = exclusiveFlag.toString()
-
-        // 如果 exclusiveSessionOnly 为 false，强制 enableMessageDigest 为 false
-        if (!exclusiveFlag) {
-          updatedData.enableMessageDigest = 'false'
-        }
-      }
-
-      // 🔒 处理消息摘要验证开关
-      if (updates.enableMessageDigest !== undefined) {
-        const digestFlag =
-          updates.enableMessageDigest === true || updates.enableMessageDigest === 'true'
-        updatedData.enableMessageDigest = digestFlag.toString()
       }
 
       // 🔒 处理并发控制配置

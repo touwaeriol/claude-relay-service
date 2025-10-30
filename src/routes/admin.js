@@ -1196,12 +1196,10 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
       batchSessionConcurrencyProvided = parsedSessionConcurrency.provided
       batchSessionConcurrencyPayload = parsedSessionConcurrency.value
     } catch (error) {
-      return res
-        .status(400)
-        .json({
-          error: 'Invalid session concurrency configuration',
-          message: error.message
-        })
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
     }
 
     logger.info(
@@ -2621,11 +2619,9 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedUserAgent,
       useUnifiedClientId,
       unifiedClientId,
+      rewriteSessionId,
       expiresAt,
       extInfo,
-      // 🔒 独占会话配置
-      exclusiveSessionOnly,
-      enableMessageDigest,
       // 并发控制配置（对象）
       concurrencyControl,
       sessionConcurrencyConfig
@@ -2672,11 +2668,10 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedUserAgent: useUnifiedUserAgent === true, // 默认为false
       useUnifiedClientId: useUnifiedClientId === true, // 默认为false
       unifiedClientId: unifiedClientId || '', // 统一的客户端标识
+      rewriteSessionId:
+        platform === 'claude' && useUnifiedClientId === true && rewriteSessionId === true,
       expiresAt: expiresAt || null, // 账户订阅到期时间
       extInfo: extInfo || null,
-      // 🔒 独占会话配置
-      exclusiveSessionOnly: exclusiveSessionOnly === true, // 是否只允许处理自身会话
-      enableMessageDigest: enableMessageDigest === true, // 是否启用消息摘要验证
       // 并发控制配置（对象）
       concurrencyControl: concurrencyControl || null,
       sessionConcurrencyConfig: sessionConcurrencyConfig || null
@@ -2748,6 +2743,15 @@ router.put('/claude-accounts/:accountId', authenticateAdmin, async (req, res) =>
     const currentAccount = await claudeAccountService.getAccount(accountId)
     if (!currentAccount) {
       return res.status(404).json({ error: 'Account not found' })
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mappedUpdates, 'rewriteSessionId')) {
+      if ((currentAccount.platform || '').toLowerCase() !== 'claude') {
+        delete mappedUpdates.rewriteSessionId
+      } else {
+        mappedUpdates.rewriteSessionId =
+          mappedUpdates.rewriteSessionId === true || mappedUpdates.rewriteSessionId === 'true'
+      }
     }
 
     // 处理分组的变更
@@ -3064,9 +3068,6 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       groupId,
       dailyQuota,
       quotaResetTime,
-      // 🔒 独占会话和并发控制
-      exclusiveSessionOnly,
-      enableMessageDigest,
       concurrencyControl,
       sessionConcurrencyConfig
     } = req.body
@@ -3106,9 +3107,6 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       accountType: accountType || 'shared',
       dailyQuota: dailyQuota || 0,
       quotaResetTime: quotaResetTime || '00:00',
-      // 🔒 独占会话和并发控制
-      exclusiveSessionOnly: exclusiveSessionOnly === true,
-      enableMessageDigest: enableMessageDigest === true,
       concurrencyControl: concurrencyControl || null,
       sessionConcurrencyConfig: sessionConcurrencyConfig || null
     })

@@ -23,6 +23,7 @@ const redis = require('../models/redis')
 const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 const { formatDateWithTimezone } = require('../utils/dateHelper')
 const runtimeAddon = require('../utils/runtimeAddon')
+const rewriteSessionId = require('../utils/sessionIdRewriter')
 
 const RUNTIME_EVENT_FMT_CLAUDE_REQ = 'fmtClaudeReq'
 
@@ -312,7 +313,7 @@ class ClaudeRelayService {
         })
       }
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      const processedBody = this._processRequestBody(requestBody, account, apiKeyData)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
@@ -633,7 +634,7 @@ class ClaudeRelayService {
   }
 
   // 🔄 处理请求体
-  _processRequestBody(body, account = null) {
+  _processRequestBody(body, account = null, apiKeyData = null) {
     if (!body) {
       return body
     }
@@ -740,6 +741,18 @@ class ClaudeRelayService {
     // 处理统一的客户端标识
     if (account && account.useUnifiedClientId === 'true' && account.unifiedClientId) {
       this._replaceClientId(processedBody, account.unifiedClientId)
+    }
+
+    if (account) {
+      rewriteSessionId(processedBody, {
+        account,
+        apiKeyId:
+          apiKeyData?.id ||
+          apiKeyData?.apiKeyId ||
+          apiKeyData?.keyId ||
+          apiKeyData?.api_key_id ||
+          null
+      })
     }
 
     return processedBody
@@ -1460,7 +1473,7 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      const processedBody = this._processRequestBody(requestBody, account, apiKeyData)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
