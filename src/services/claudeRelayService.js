@@ -295,6 +295,23 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
+      try {
+        logger.debug(
+          `📝 Incoming Claude request body | sessionHash=${
+            sessionContext?.sessionHash || 'null'
+          } | isNewSession=${sessionContext?.isNewSession}`,
+          {
+            requestBodyJson: JSON.stringify(requestBody, null, 2)
+          }
+        )
+      } catch (error) {
+        logger.debug('📝 Incoming Claude request body (serialization failed)', {
+          sessionHash: sessionContext?.sessionHash || null,
+          isNewSession: sessionContext?.isNewSession,
+          serializationError: error.message
+        })
+      }
+
       const processedBody = this._processRequestBody(requestBody, account)
 
       // 获取代理配置

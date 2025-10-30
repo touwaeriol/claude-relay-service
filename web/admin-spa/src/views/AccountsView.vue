@@ -1082,108 +1082,91 @@
                       account.concurrency.maxQueueSize > 0 ||
                       account.concurrency.maxSessions > 0)
                   "
-                  class="space-y-1"
+                  class="space-y-2"
                 >
-                  <div class="flex flex-wrap items-center gap-1 font-mono text-sm">
-                    <!-- 最大会话 -->
-                    <span
-                      class="font-semibold"
-                      :class="
-                        account.concurrency.sessionEnabled
-                          ? 'text-sky-600 dark:text-sky-400'
-                          : 'text-gray-400 dark:text-gray-500'
-                      "
-                    >
-                      {{
-                        account.concurrency.sessionEnabled
-                          ? account.concurrency.maxSessions || 0
-                          : '—'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <!-- 当前会话 -->
-                    <span
-                      class="font-semibold"
-                      :class="
-                        account.concurrency.sessionEnabled &&
-                        account.concurrency.currentSessions > 0
-                          ? 'text-sky-500 dark:text-sky-300'
-                          : 'text-gray-400 dark:text-gray-500'
-                      "
-                    >
-                      {{
-                        account.concurrency.sessionEnabled
-                          ? account.concurrency.currentSessions || 0
-                          : '—'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <!-- 最大队列 -->
-                    <span class="font-semibold text-blue-600 dark:text-blue-400">
-                      {{ account.concurrency.maxQueueSize }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <!-- 当前等待 -->
-                    <span
-                      class="font-semibold"
-                      :class="
-                        account.concurrency.currentWaiting > 0
-                          ? 'text-orange-600 dark:text-orange-400'
-                          : 'text-gray-400 dark:text-gray-500'
-                      "
-                    >
-                      {{ account.concurrency.currentWaiting }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <!-- 最大并发 -->
-                    <span class="font-semibold text-green-600 dark:text-green-400">
-                      {{ account.concurrency.maxConcurrency }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <!-- 当前运行 -->
-                    <span
-                      class="font-semibold"
-                      :class="
-                        account.concurrency.currentRunning > 0
-                          ? 'text-purple-600 dark:text-purple-400'
-                          : 'text-gray-400 dark:text-gray-500'
-                      "
-                    >
-                      {{ account.concurrency.currentRunning }}
-                    </span>
+                  <!-- 会话并发 -->
+                  <div v-if="account.concurrency.sessionEnabled" class="flex flex-col gap-0.5">
+                    <div class="flex items-center gap-1 font-mono text-xs">
+                      <span class="font-semibold text-sky-600 dark:text-sky-400">
+                        {{ account.concurrency.maxSessions || 0 }}
+                      </span>
+                      <span class="text-gray-400">/</span>
+                      <span
+                        class="font-semibold"
+                        :class="
+                          account.concurrency.currentSessions > 0
+                            ? 'text-sky-500 dark:text-sky-300'
+                            : 'text-gray-400 dark:text-gray-500'
+                        "
+                      >
+                        {{ account.concurrency.currentSessions || 0 }}
+                      </span>
+                    </div>
+                    <div class="text-[9px] text-gray-500 dark:text-gray-400">
+                      <span class="text-sky-600 dark:text-sky-400">会话</span>/<span
+                        :class="
+                          account.concurrency.currentSessions > 0
+                            ? 'text-sky-500 dark:text-sky-300'
+                            : ''
+                        "
+                        >活跃</span
+                      >
+                    </div>
                   </div>
-                  <div class="text-[10px] text-gray-500 dark:text-gray-400">
-                    <span
-                      :class="
-                        account.concurrency.sessionEnabled ? 'text-sky-600 dark:text-sky-400' : ''
-                      "
-                      >会话</span
-                    >/
-                    <span
-                      :class="
-                        account.concurrency.sessionEnabled &&
-                        account.concurrency.currentSessions > 0
-                          ? 'text-sky-500 dark:text-sky-300'
-                          : ''
-                      "
-                      >活跃</span
-                    >/ <span class="text-blue-600 dark:text-blue-400">队列</span>/
-                    <span
-                      :class="
-                        account.concurrency.currentWaiting > 0
-                          ? 'text-orange-600 dark:text-orange-400'
-                          : ''
-                      "
-                      >等待</span
-                    >/ <span class="text-green-600 dark:text-green-400">并发</span>/
-                    <span
-                      :class="
-                        account.concurrency.currentRunning > 0
-                          ? 'text-purple-600 dark:text-purple-400'
-                          : ''
-                      "
-                      >运行</span
-                    >
+
+                  <!-- 请求并发 -->
+                  <div class="flex flex-col gap-0.5">
+                    <div class="flex items-center gap-1 font-mono text-xs">
+                      <!-- 队列/等待 -->
+                      <span class="font-semibold text-blue-600 dark:text-blue-400">
+                        {{ account.concurrency.maxQueueSize }}
+                      </span>
+                      <span class="text-gray-400">/</span>
+                      <span
+                        class="font-semibold"
+                        :class="
+                          account.concurrency.currentWaiting > 0
+                            ? 'text-orange-600 dark:text-orange-400'
+                            : 'text-gray-400 dark:text-gray-500'
+                        "
+                      >
+                        {{ account.concurrency.currentWaiting }}
+                      </span>
+                      <span class="text-gray-400">|</span>
+                      <!-- 并发/运行 -->
+                      <span class="font-semibold text-green-600 dark:text-green-400">
+                        {{ account.concurrency.maxConcurrency }}
+                      </span>
+                      <span class="text-gray-400">/</span>
+                      <span
+                        class="font-semibold"
+                        :class="
+                          account.concurrency.currentRunning > 0
+                            ? 'text-purple-600 dark:text-purple-400'
+                            : 'text-gray-400 dark:text-gray-500'
+                        "
+                      >
+                        {{ account.concurrency.currentRunning }}
+                      </span>
+                    </div>
+                    <div class="text-[9px] text-gray-500 dark:text-gray-400">
+                      <span class="text-blue-600 dark:text-blue-400">队列</span>/<span
+                        :class="
+                          account.concurrency.currentWaiting > 0
+                            ? 'text-orange-600 dark:text-orange-400'
+                            : ''
+                        "
+                        >等待</span
+                      >
+                      | <span class="text-green-600 dark:text-green-400">并发</span>/<span
+                        :class="
+                          account.concurrency.currentRunning > 0
+                            ? 'text-purple-600 dark:text-purple-400'
+                            : ''
+                        "
+                        >运行</span
+                      >
+                    </div>
                   </div>
                 </div>
                 <div v-else class="text-xs text-gray-400">未启用</div>

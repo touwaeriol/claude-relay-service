@@ -17,7 +17,7 @@ const DEFAULT_CONFIG = {
   enabled: false,
   maxSessions: 10,
   windowSeconds: 3600,
-  ...(config?.defaults && config.defaults.sessionConcurrency)
+  ...(config?.defaults?.sessionConcurrency || {})
 }
 
 /**

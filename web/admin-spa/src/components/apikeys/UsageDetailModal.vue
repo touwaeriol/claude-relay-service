@@ -195,111 +195,93 @@
               </div>
 
               <template v-if="concurrencyConfig.enabled || concurrencyDetails.sessionEnabled">
-                <div
-                  class="space-y-2 rounded-lg border border-purple-200/70 bg-white/60 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
-                >
-                  <div class="flex items-center justify-between">
-                    <span class="text-gray-600 dark:text-gray-300">并发限制</span>
-                    <span class="text-xs text-gray-400 dark:text-gray-500">Realtime</span>
-                  </div>
-                  <div class="flex flex-wrap items-center gap-2 font-mono text-base">
-                    <span
-                      :class="
-                        concurrencyDetails.sessionEnabled
-                          ? 'text-sky-600 dark:text-sky-300'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.sessionEnabled ? concurrencyDetails.maxSessions : '--'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <span
-                      :class="
-                        concurrencyDetails.sessionEnabled &&
-                        (concurrencyDetails.currentSessions ?? 0) > 0
-                          ? 'text-sky-500 dark:text-sky-200'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.sessionEnabled
-                          ? (concurrencyDetails.currentSessions ?? 0)
-                          : '--'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <span
-                      :class="
-                        concurrencyDetails.enabled
-                          ? 'text-blue-600 dark:text-blue-300'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.enabled && concurrencyDetails.maxQueueSize !== null
-                          ? concurrencyDetails.maxQueueSize
-                          : '--'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <span
-                      :class="
-                        concurrencyDetails.enabled && (concurrencyDetails.currentWaiting ?? 0) > 0
-                          ? 'text-orange-600 dark:text-orange-300'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.enabled && concurrencyDetails.currentWaiting !== null
-                          ? concurrencyDetails.currentWaiting
-                          : '--'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <span
-                      :class="
-                        concurrencyDetails.enabled
-                          ? 'text-green-600 dark:text-green-300'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.enabled && concurrencyDetails.maxConcurrency !== null
-                          ? concurrencyDetails.maxConcurrency
-                          : '--'
-                      }}
-                    </span>
-                    <span class="text-gray-400">/</span>
-                    <span
-                      :class="
-                        concurrencyDetails.enabled && (concurrencyDetails.currentRunning ?? 0) > 0
-                          ? 'text-purple-600 dark:text-purple-300'
-                          : 'text-gray-400 dark:text-gray-600'
-                      "
-                    >
-                      {{
-                        concurrencyDetails.enabled && concurrencyDetails.currentRunning !== null
-                          ? concurrencyDetails.currentRunning
-                          : '--'
-                      }}
-                    </span>
-                  </div>
+                <!-- 并发控制 - 分列显示 -->
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <!-- 会话并发 -->
                   <div
-                    class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400"
+                    v-if="concurrencyDetails.sessionEnabled"
+                    class="space-y-2 rounded-lg border border-sky-200/70 bg-gradient-to-r from-sky-50 to-blue-50 px-3 py-2 text-sm shadow-sm dark:border-sky-500/40 dark:from-sky-900/20 dark:to-blue-900/20"
                   >
-                    <span>会话/活跃</span>
-                    <span>队列/等待</span>
-                    <span>并发/运行</span>
-                    <span>
-                      超时
-                      {{
-                        concurrencyConfig.enabled && concurrencyDetails.queueTimeout !== null
-                          ? `${concurrencyDetails.queueTimeout}s`
-                          : '--'
-                      }}
-                    </span>
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-600 dark:text-gray-300">会话并发</span>
+                      <span class="text-xs text-gray-400 dark:text-gray-500">Realtime</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono text-base">
+                      <span class="font-semibold text-sky-600 dark:text-sky-300">
+                        {{ concurrencyDetails.maxSessions }}
+                      </span>
+                      <span class="text-gray-400">/</span>
+                      <span
+                        :class="
+                          (concurrencyDetails.currentSessions ?? 0) > 0
+                            ? 'text-sky-500 dark:text-sky-200'
+                            : 'text-gray-400 dark:text-gray-600'
+                        "
+                      >
+                        {{ concurrencyDetails.currentSessions ?? 0 }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 dark:text-gray-400">会话/活跃</div>
+                  </div>
+
+                  <!-- 请求并发 -->
+                  <div
+                    v-if="concurrencyDetails.enabled"
+                    class="space-y-2 rounded-lg border border-purple-200/70 bg-gradient-to-r from-purple-50 to-pink-50 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:from-purple-900/20 dark:to-pink-900/20"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-600 dark:text-gray-300">请求并发</span>
+                      <span class="text-xs text-gray-400 dark:text-gray-500">Realtime</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono text-base">
+                      <!-- 队列/等待 -->
+                      <div class="flex items-center gap-1">
+                        <span class="font-semibold text-blue-600 dark:text-blue-300">
+                          {{ concurrencyDetails.maxQueueSize ?? '--' }}
+                        </span>
+                        <span class="text-gray-400">/</span>
+                        <span
+                          :class="
+                            (concurrencyDetails.currentWaiting ?? 0) > 0
+                              ? 'text-orange-600 dark:text-orange-300'
+                              : 'text-gray-400 dark:text-gray-600'
+                          "
+                        >
+                          {{ concurrencyDetails.currentWaiting ?? 0 }}
+                        </span>
+                      </div>
+                      <span class="text-gray-400">|</span>
+                      <!-- 并发/运行 -->
+                      <div class="flex items-center gap-1">
+                        <span class="font-semibold text-green-600 dark:text-green-300">
+                          {{ concurrencyDetails.maxConcurrency ?? '--' }}
+                        </span>
+                        <span class="text-gray-400">/</span>
+                        <span
+                          :class="
+                            (concurrencyDetails.currentRunning ?? 0) > 0
+                              ? 'text-purple-600 dark:text-purple-300'
+                              : 'text-gray-400 dark:text-gray-600'
+                          "
+                        >
+                          {{ concurrencyDetails.currentRunning ?? 0 }}
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400"
+                    >
+                      <span>队列/等待</span>
+                      <span>并发/运行</span>
+                      <span>
+                        超时
+                        {{
+                          concurrencyDetails.queueTimeout !== null
+                            ? `${concurrencyDetails.queueTimeout}s`
+                            : '--'
+                        }}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </template>

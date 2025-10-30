@@ -10,18 +10,67 @@ const messageDigestHelper = require('./messageDigest')
  * @returns {Object} 会话上下文
  */
 async function buildSessionContext(sessionHash, requestBody) {
-  // 判断是否为新会话（只有user消息）
-  const messages = Array.isArray(requestBody.messages) ? requestBody.messages : []
-  let isNewSession = true
+  const messages = Array.isArray(requestBody?.messages) ? requestBody.messages : []
+
+  let hasOnlyUserMessages = true
   for (const msg of messages) {
     if (!msg || msg.role === 'system') {
       continue
     }
     if (msg.role !== 'user') {
-      isNewSession = false
+      hasOnlyUserMessages = false
       break
     }
   }
+
+  let stickyAccountId = null
+  let digestExists = false
+
+  if (sessionHash) {
+    try {
+      stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
+    } catch (error) {
+      logger.warn('⚠️ Failed to read sticky session mapping when building context:', error)
+    }
+
+    if (stickyAccountId) {
+      try {
+        const redisClient = redis.getClient()
+        if (redisClient) {
+          const digestKey = messageDigestHelper.getDigestRedisKey(stickyAccountId, sessionHash)
+          digestExists = (await redisClient.exists(digestKey)) === 1
+        }
+      } catch (error) {
+        logger.warn('⚠️ Failed to inspect session digest presence:', error)
+      }
+    }
+  }
+
+  const metadata = requestBody?.metadata || {}
+  const explicitResumeIndicators =
+    metadata.resume === true ||
+    metadata.resume === 'true' ||
+    metadata.isResume === true ||
+    metadata.isResume === 'true' ||
+    metadata.sessionType === 'resume' ||
+    metadata.sessionType === 'existing'
+
+  const requestCarriesSessionInfo =
+    Boolean(requestBody?.conversation_id) ||
+    Boolean(requestBody?.conversationId) ||
+    Boolean(requestBody?.session_id) ||
+    Boolean(requestBody?.sessionId)
+
+  const hasSessionArtifacts = Boolean(stickyAccountId) || digestExists
+  const shouldTreatAsExisting =
+    explicitResumeIndicators || (requestCarriesSessionInfo && hasSessionArtifacts)
+
+  const isNewSession = !shouldTreatAsExisting && hasOnlyUserMessages && !hasSessionArtifacts
+
+  logger.debug(
+    `🧭 Session context resolved: session=${sessionHash ? sessionHash.substring(0, 8) + '...' : 'none'}, ` +
+      `new=${isNewSession}, sticky=${stickyAccountId ? stickyAccountId.substring(0, 8) + '...' : 'none'}, digest=${digestExists}`
+  )
 
   return {
     sessionHash,
