@@ -1669,6 +1669,7 @@
                   queueSize: '默认20',
                   queueTimeout: '默认120'
                 }"
+                :show-service-selector="false"
                 title="启用并发控制"
               />
 
@@ -2536,6 +2537,7 @@
                 queueSize: '默认20',
                 queueTimeout: '默认120'
               }"
+              :show-service-selector="false"
               title="启用并发控制"
             />
 

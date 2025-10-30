@@ -77,7 +77,7 @@
           </div>
 
           <!-- 适用 API 类型 -->
-          <div class="mt-3">
+          <div v-if="showServiceSelector" class="mt-3">
             <label class="mb-2 block text-xs font-medium text-gray-600 dark:text-gray-400">
               适用 API 类型
             </label>
@@ -123,6 +123,10 @@ const props = defineProps({
       queueTimeout: 120,
       targetServices: []
     })
+  },
+  showServiceSelector: {
+    type: Boolean,
+    default: true
   },
   title: {
     type: String,
@@ -173,6 +177,9 @@ const isServiceSelected = (serviceValue) => {
 }
 
 const handleServiceToggle = (serviceValue, event) => {
+  if (!props.showServiceSelector) {
+    return
+  }
   const targetServices = Array.isArray(props.modelValue.targetServices)
     ? props.modelValue.targetServices
     : []
