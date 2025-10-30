@@ -1673,7 +1673,10 @@
               />
 
               <!-- 会话并发控制配置 (仅 Claude Code/Console 账户) -->
-              <SessionConcurrencyConfigCard v-model="sessionConcurrencyConfig" />
+              <SessionConcurrencyConfigCard
+                v-model="sessionConcurrencyConfig"
+                :show-claude-only-note="false"
+              />
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -2537,7 +2540,10 @@
             />
 
             <!-- 会话并发控制配置 (仅 Claude Code/Console 账户，编辑模式) -->
-            <SessionConcurrencyConfigCard v-model="sessionConcurrencyConfig" />
+            <SessionConcurrencyConfigCard
+              v-model="sessionConcurrencyConfig"
+              :show-claude-only-note="false"
+            />
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
