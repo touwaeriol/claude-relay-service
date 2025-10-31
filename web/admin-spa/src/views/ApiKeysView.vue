@@ -657,6 +657,122 @@
                             <span class="text-xs font-medium">无限制</span>
                           </div>
                         </div>
+                        <template
+                          v-for="(concurrency, concurrencyIndex) in [getConcurrencyDisplay(key)]"
+                          :key="`key-concurrency-${key.id}-${concurrencyIndex}`"
+                        >
+                          <div
+                            class="mt-2 rounded-lg border border-sky-200/70 bg-sky-50/80 p-2 text-xs dark:border-sky-500/40 dark:bg-sky-900/20"
+                          >
+                            <div class="mb-1 flex items-center justify-between">
+                              <span class="font-medium text-sky-700 dark:text-sky-300">
+                                并发控制
+                              </span>
+                              <span
+                                class="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500"
+                              >
+                                Realtime
+                              </span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-1 font-mono text-sm">
+                              <span
+                                :class="
+                                  concurrency.sessionEnabled
+                                    ? 'text-sky-600 dark:text-sky-300'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{ concurrency.sessionEnabled ? concurrency.maxSessions : '--' }}
+                              </span>
+                              <span class="text-gray-400">/</span>
+                              <span
+                                :class="
+                                  concurrency.sessionEnabled &&
+                                  (concurrency.currentSessions ?? 0) > 0
+                                    ? 'text-sky-500 dark:text-sky-200'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{
+                                  concurrency.sessionEnabled
+                                    ? (concurrency.currentSessions ?? 0)
+                                    : '--'
+                                }}
+                              </span>
+                              <span class="text-gray-400">/</span>
+                              <span
+                                :class="
+                                  concurrency.enabled
+                                    ? 'text-blue-600 dark:text-blue-300'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{
+                                  concurrency.enabled && concurrency.maxQueueSize !== null
+                                    ? concurrency.maxQueueSize
+                                    : '--'
+                                }}
+                              </span>
+                              <span class="text-gray-400">/</span>
+                              <span
+                                :class="
+                                  concurrency.enabled && (concurrency.currentWaiting ?? 0) > 0
+                                    ? 'text-orange-600 dark:text-orange-300'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{
+                                  concurrency.enabled && concurrency.currentWaiting !== null
+                                    ? concurrency.currentWaiting
+                                    : '--'
+                                }}
+                              </span>
+                              <span class="text-gray-400">/</span>
+                              <span
+                                :class="
+                                  concurrency.enabled
+                                    ? 'text-green-600 dark:text-green-300'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{
+                                  concurrency.enabled && concurrency.maxConcurrency !== null
+                                    ? concurrency.maxConcurrency
+                                    : '--'
+                                }}
+                              </span>
+                              <span class="text-gray-400">/</span>
+                              <span
+                                :class="
+                                  concurrency.enabled && (concurrency.currentRunning ?? 0) > 0
+                                    ? 'text-purple-600 dark:text-purple-300'
+                                    : 'text-gray-400 dark:text-gray-600'
+                                "
+                              >
+                                {{
+                                  concurrency.enabled && concurrency.currentRunning !== null
+                                    ? concurrency.currentRunning
+                                    : '--'
+                                }}
+                              </span>
+                            </div>
+                            <div
+                              class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
+                            >
+                              <span>会话/活跃</span>
+                              <span>队列/等待</span>
+                              <span>并发/运行</span>
+                              <span>
+                                超时
+                                {{
+                                  concurrency.enabled && concurrency.queueTimeout !== null
+                                    ? `${concurrency.queueTimeout}s`
+                                    : '--'
+                                }}
+                              </span>
+                            </div>
+                          </div>
+                        </template>
                       </td>
                       <!-- Token数量 -->
                       <td class="whitespace-nowrap px-3 py-3 text-right" style="font-size: 13px">
@@ -1377,6 +1493,114 @@
                   </div>
                 </div>
               </div>
+
+              <template
+                v-for="(concurrency, mobileConcurrencyIndex) in [getConcurrencyDisplay(key)]"
+                :key="`key-mobile-concurrency-${key.id}-${mobileConcurrencyIndex}`"
+              >
+                <div
+                  class="mb-3 rounded-lg border border-sky-200/60 bg-sky-50/70 p-3 text-xs dark:border-sky-500/40 dark:bg-sky-900/20"
+                >
+                  <div class="mb-1 flex items-center justify-between">
+                    <span class="font-medium text-sky-700 dark:text-sky-300">并发控制</span>
+                    <span class="text-[10px] uppercase tracking-wide text-gray-400">
+                      Realtime
+                    </span>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-1 font-mono text-sm">
+                    <span
+                      :class="
+                        concurrency.sessionEnabled
+                          ? 'text-sky-600 dark:text-sky-300'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{ concurrency.sessionEnabled ? concurrency.maxSessions : '--' }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <span
+                      :class="
+                        concurrency.sessionEnabled && (concurrency.currentSessions ?? 0) > 0
+                          ? 'text-sky-500 dark:text-sky-200'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{ concurrency.sessionEnabled ? (concurrency.currentSessions ?? 0) : '--' }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <span
+                      :class="
+                        concurrency.enabled
+                          ? 'text-blue-600 dark:text-blue-300'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{
+                        concurrency.enabled && concurrency.maxQueueSize !== null
+                          ? concurrency.maxQueueSize
+                          : '--'
+                      }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <span
+                      :class="
+                        concurrency.enabled && (concurrency.currentWaiting ?? 0) > 0
+                          ? 'text-orange-600 dark:text-orange-300'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{
+                        concurrency.enabled && concurrency.currentWaiting !== null
+                          ? concurrency.currentWaiting
+                          : '--'
+                      }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <span
+                      :class="
+                        concurrency.enabled
+                          ? 'text-green-600 dark:text-green-300'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{
+                        concurrency.enabled && concurrency.maxConcurrency !== null
+                          ? concurrency.maxConcurrency
+                          : '--'
+                      }}
+                    </span>
+                    <span class="text-gray-400">/</span>
+                    <span
+                      :class="
+                        concurrency.enabled && (concurrency.currentRunning ?? 0) > 0
+                          ? 'text-purple-600 dark:text-purple-300'
+                          : 'text-gray-400 dark:text-gray-600'
+                      "
+                    >
+                      {{
+                        concurrency.enabled && concurrency.currentRunning !== null
+                          ? concurrency.currentRunning
+                          : '--'
+                      }}
+                    </span>
+                  </div>
+                  <div
+                    class="mt-1 flex items-center gap-3 text-[10px] text-gray-500 dark:text-gray-400"
+                  >
+                    <span>会话/活跃</span>
+                    <span>队列/等待</span>
+                    <span>并发/运行</span>
+                    <span>
+                      超时
+                      {{
+                        concurrency.enabled && concurrency.queueTimeout !== null
+                          ? `${concurrency.queueTimeout}s`
+                          : '--'
+                      }}
+                    </span>
+                  </div>
+                </div>
+              </template>
 
               <!-- 时间信息 -->
               <div class="mb-3 text-xs text-gray-500 dark:text-gray-400">
@@ -3831,6 +4055,47 @@ const isLastUsageDeleted = (apiKey) => {
   return isLikelyDeletedUsage(info)
 }
 
+const getConcurrencyDisplay = (apiKey) => {
+  const config = apiKey?.concurrencyConfig || {}
+  const stats = apiKey?.concurrencyStats || {}
+  const enabled = !!config.enabled
+  const sessionEnabled = !!stats.sessionEnabled
+
+  const parseNumber = (value) => {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : 0
+  }
+
+  const maxSessions = sessionEnabled ? parseNumber(stats.maxSessions) : null
+  const currentSessions = sessionEnabled ? parseNumber(stats.currentSessions) : null
+  const maxQueueSize = enabled ? parseNumber(config.queueSize) : null
+  const maxConcurrency = enabled ? parseNumber(config.maxConcurrency) : null
+  const queueTimeout =
+    enabled && config.queueTimeout !== undefined && config.queueTimeout !== null
+      ? parseNumber(config.queueTimeout)
+      : null
+  const currentWaiting =
+    enabled && (stats.currentWaiting !== undefined || apiKey.currentConcurrencyQueue !== undefined)
+      ? parseNumber(stats.currentWaiting ?? apiKey.currentConcurrencyQueue)
+      : null
+  const currentRunning =
+    enabled && (stats.currentRunning !== undefined || apiKey.currentConcurrency !== undefined)
+      ? parseNumber(stats.currentRunning ?? apiKey.currentConcurrency)
+      : null
+
+  return {
+    enabled,
+    sessionEnabled,
+    maxSessions,
+    currentSessions,
+    maxQueueSize,
+    currentWaiting,
+    maxConcurrency,
+    currentRunning,
+    queueTimeout
+  }
+}
+
 // 清除搜索
 const clearSearch = () => {
   searchKeyword.value = ''
@@ -3848,6 +4113,7 @@ const exportToExcel = () => {
       const periodTokens = getPeriodTokens(key)
       const periodInputTokens = getPeriodInputTokens(key)
       const periodOutputTokens = getPeriodOutputTokens(key)
+      const concurrency = getConcurrencyDisplay(key)
 
       // 基础数据
       const baseData = {
@@ -3887,10 +4153,16 @@ const exportToExcel = () => {
 
         // 限制配置
         令牌限制: key.tokenLimit === '0' || key.tokenLimit === 0 ? '无限制' : key.tokenLimit || '',
-        并发限制:
-          key.concurrencyLimit === '0' || key.concurrencyLimit === 0
-            ? '无限制'
-            : key.concurrencyLimit || '',
+        并发控制:
+          key.concurrencyConfig && key.concurrencyConfig.enabled
+            ? `会话 ${concurrency.sessionEnabled ? concurrency.maxSessions : '--'} / ${
+                concurrency.sessionEnabled ? (concurrency.currentSessions ?? 0) : '--'
+              } | 队列 ${concurrency.maxQueueSize ?? '--'} / ${
+                concurrency.currentWaiting ?? '--'
+              } | 并发 ${concurrency.maxConcurrency ?? '--'} / ${
+                concurrency.currentRunning ?? '--'
+              } | 超时 ${key.concurrencyConfig.queueTimeout ?? '--'}s`
+            : '未启用',
         '速率窗口(分钟)':
           key.rateLimitWindow === '0' || key.rateLimitWindow === 0
             ? '无限制'

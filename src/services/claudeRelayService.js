@@ -6,6 +6,17 @@ const ProxyHelper = require('../utils/proxyHelper')
 const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
+const concurrencyManager = require('./concurrencyManager')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
+const {
+  checkAccountSessionLimit,
+  checkApiKeySessionLimit
+} = require('../utils/sessionConcurrencyHelper')
+const {
+  buildSessionContext,
+  registerSessionForAccount,
+  refreshSessionRetention
+} = require('../utils/claudeSessionCoordinator')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 const claudeCodeHeadersService = require('./claudeCodeHeadersService')
@@ -13,6 +24,7 @@ const redis = require('../models/redis')
 const ClaudeCodeValidator = require('../validators/clients/claudeCodeValidator')
 const { formatDateWithTimezone } = require('../utils/dateHelper')
 const runtimeAddon = require('../utils/runtimeAddon')
+const rewriteSessionId = require('../utils/sessionIdRewriter')
 
 const RUNTIME_EVENT_FMT_CLAUDE_REQ = 'fmtClaudeReq'
 
@@ -107,6 +119,50 @@ class ClaudeRelayService {
     options = {}
   ) {
     let upstreamRequest = null
+    const sessionHash = sessionHelper.generateSessionHash(requestBody)
+    let sessionContext = options.sessionContext || null
+    let accountSelection = options.preselectedAccount || null
+    const isOpusModelRequest =
+      typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
+
+    try {
+      if (!sessionContext) {
+        sessionContext = await buildSessionContext(sessionHash, requestBody)
+      }
+
+      if (!accountSelection) {
+        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
+          apiKeyData,
+          sessionHash,
+          requestBody.model,
+          { sessionContext }
+        )
+      }
+    } catch (error) {
+      if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+        const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
+        const err = new Error(limitMessage)
+        err.status = 403
+        err.code = 'upstream_rate_limited'
+        err.accountId = error.accountId
+        err.body = JSON.stringify({
+          error: 'upstream_rate_limited',
+          message: limitMessage
+        })
+        throw err
+      }
+      if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
+        const err = new Error(error.message)
+        err.status = 422
+        err.code = error.code
+        err.body = JSON.stringify({
+          error: error.code,
+          message: error.message
+        })
+        throw err
+      }
+      throw error
+    }
 
     try {
       // 调试日志：查看API Key数据
@@ -116,39 +172,6 @@ class ClaudeRelayService {
         restrictedModels: apiKeyData.restrictedModels,
         requestedModel: requestBody.model
       })
-
-      const isOpusModelRequest =
-        typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
-
-      // 生成会话哈希用于sticky会话
-      const sessionHash = sessionHelper.generateSessionHash(requestBody)
-
-      // 选择可用的Claude账户（支持专属绑定和sticky会话）
-      let accountSelection
-      try {
-        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          apiKeyData,
-          sessionHash,
-          requestBody.model
-        )
-      } catch (error) {
-        if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
-          const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
-          logger.warn(
-            `🚫 Dedicated account ${error.accountId} is rate limited for API key ${apiKeyData.name}, returning 403`
-          )
-          return {
-            statusCode: 403,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              error: 'upstream_rate_limited',
-              message: limitMessage
-            }),
-            accountId: error.accountId
-          }
-        }
-        throw error
-      }
       const { accountId } = accountSelection
       const { accountType } = accountSelection
 
@@ -163,6 +186,92 @@ class ClaudeRelayService {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
       }
+
+      // 🔐 API Key 会话并发控制检查
+      const apiKeySessionCheck = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash
+      })
+      if (!apiKeySessionCheck.allowed) {
+        return apiKeySessionCheck.error
+      }
+
+      // 🔐 会话并发控制检查（账号级）
+      const sessionLimitCheck = await checkAccountSessionLimit({
+        account,
+        sessionHash
+      })
+      if (!sessionLimitCheck.allowed) {
+        return sessionLimitCheck.error
+      }
+
+      // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
+      if (accountType === 'claude-official' || accountType === 'claude-console') {
+        const concurrencyConfig = this._resolveConcurrencyConfig(account)
+
+        if (concurrencyConfig?.enabled) {
+          try {
+            logger.debug(
+              `🔒 Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ Acquired concurrency slot for ${accountId}`)
+          } catch (error) {
+            if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
+              logger.warn(
+                `🚫 Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+              )
+              return {
+                statusCode: 429,
+                headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+                body: JSON.stringify({
+                  error: 'concurrency_limit_exceeded',
+                  message: error.message,
+                  details: {
+                    currentWaiting: error.currentWaiting,
+                    maxQueueSize: error.maxQueueSize
+                  }
+                }),
+                accountId
+              }
+            } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
+              logger.warn(`⏱️ Concurrency timeout for ${accountId}: waited ${error.timeout}s`)
+              return {
+                statusCode: 503,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Retry-After': Math.ceil(error.timeout / 2).toString()
+                },
+                body: JSON.stringify({
+                  error: 'concurrency_timeout',
+                  message: error.message,
+                  details: {
+                    timeout: error.timeout
+                  }
+                }),
+                accountId
+              }
+            } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
+              logger.info(`🔌 Client disconnected while waiting for concurrency slot: ${accountId}`)
+              // 客户端已断开，抛出异常中断执行
+              const disconnectError = new Error('Client disconnected')
+              disconnectError.code = CONCURRENCY_ERRORS.CLIENT_DISCONNECTED
+              disconnectError.accountId = accountId
+              throw disconnectError
+            }
+            // 其他错误继续抛出
+            throw error
+          }
+        }
+      }
+
+      await registerSessionForAccount(accountSelection, sessionContext)
 
       const isDedicatedOfficialAccount =
         accountType === 'claude-official' &&
@@ -196,7 +305,24 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      try {
+        logger.debug(
+          `📝 Incoming Claude request body | sessionHash=${
+            sessionContext?.sessionHash || 'null'
+          } | isNewSession=${sessionContext?.isNewSession}`,
+          {
+            requestBodyJson: JSON.stringify(requestBody, null, 2)
+          }
+        )
+      } catch (error) {
+        logger.debug('📝 Incoming Claude request body (serialization failed)', {
+          sessionHash: sessionContext?.sessionHash || null,
+          isNewSession: sessionContext?.isNewSession,
+          serializationError: error.message
+        })
+      }
+
+      const processedBody = this._processRequestBody(requestBody, account, apiKeyData)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
@@ -229,6 +355,8 @@ class ClaudeRelayService {
         },
         options
       )
+
+      await refreshSessionRetention(accountSelection, sessionContext)
 
       response.accountId = accountId
       response.accountType = accountType
@@ -493,6 +621,19 @@ class ClaudeRelayService {
       response.accountId = accountId
       return response
     } catch (error) {
+      if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+        const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
+        const err = new Error(limitMessage)
+        err.status = 403
+        err.code = 'upstream_rate_limited'
+        err.accountId = error.accountId
+        err.body = JSON.stringify({
+          error: 'upstream_rate_limited',
+          message: limitMessage
+        })
+        throw err
+      }
+
       logger.error(
         `❌ Claude relay request failed for key: ${apiKeyData.name || apiKeyData.id}:`,
         error.message
@@ -502,7 +643,7 @@ class ClaudeRelayService {
   }
 
   // 🔄 处理请求体
-  _processRequestBody(body, account = null) {
+  _processRequestBody(body, account = null, _apiKeyData = null) {
     if (!body) {
       return body
     }
@@ -609,6 +750,12 @@ class ClaudeRelayService {
     // 处理统一的客户端标识
     if (account && account.useUnifiedClientId === 'true' && account.unifiedClientId) {
       this._replaceClientId(processedBody, account.unifiedClientId)
+    }
+
+    if (account) {
+      rewriteSessionId(processedBody, {
+        account
+      })
     }
 
     return processedBody
@@ -1137,35 +1284,50 @@ class ClaudeRelayService {
         requestedModel: requestBody.model
       })
 
+      let accountSelection
+      let sessionContext = options.sessionContext || null
       const isOpusModelRequest =
         typeof requestBody?.model === 'string' && requestBody.model.toLowerCase().includes('opus')
 
-      // 生成会话哈希用于sticky会话
-      const sessionHash = sessionHelper.generateSessionHash(requestBody)
-
-      // 选择可用的Claude账户（支持专属绑定和sticky会话）
-      let accountSelection
+      // 生成会话哈希
+      let sessionHash
       try {
-        accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
-          apiKeyData,
-          sessionHash,
-          requestBody.model
-        )
+        sessionHash = sessionHelper.generateSessionHash(requestBody)
+        if (!sessionContext) {
+          sessionContext = await buildSessionContext(sessionHash, requestBody)
+        }
+
+        accountSelection = options.preselectedAccount || null
+        if (!accountSelection) {
+          accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
+            apiKeyData,
+            sessionHash,
+            requestBody.model,
+            { sessionContext }
+          )
+        }
       } catch (error) {
         if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
           const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
-          if (!responseStream.headersSent) {
-            responseStream.status(403)
-            responseStream.setHeader('Content-Type', 'application/json')
-          }
-          responseStream.write(
-            JSON.stringify({
-              error: 'upstream_rate_limited',
-              message: limitMessage
-            })
-          )
-          responseStream.end()
-          return
+          const err = new Error(limitMessage)
+          err.status = 403
+          err.code = 'upstream_rate_limited'
+          err.accountId = error.accountId
+          err.body = JSON.stringify({
+            error: 'upstream_rate_limited',
+            message: limitMessage
+          })
+          throw err
+        }
+        if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
+          const err = new Error(error.message)
+          err.status = 422
+          err.code = error.code
+          err.body = JSON.stringify({
+            error: error.code,
+            message: error.message
+          })
+          throw err
         }
         throw error
       }
@@ -1183,6 +1345,106 @@ class ClaudeRelayService {
         await claudeAccountService.clearExpiredOpusRateLimit(accountId)
         account = await claudeAccountService.getAccount(accountId)
       }
+
+      // 🔐 API Key 会话并发控制检查（流式请求）
+      const apiKeySessionLimitStream = await checkApiKeySessionLimit({
+        apiKeyData,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!apiKeySessionLimitStream.allowed) {
+        return
+      }
+
+      // 🔐 会话并发控制检查（账号级，流式请求）
+      const sessionLimitCheckStream = await checkAccountSessionLimit({
+        account,
+        sessionHash,
+        isStreaming: true,
+        responseStream
+      })
+      if (!sessionLimitCheckStream.allowed) {
+        return
+      }
+
+      // 🔒 并发控制：仅针对 claude-official 和 claude-console 账户
+      // 从 options 获取 req/res 对象，如果没有则使用 responseStream 作为 fallback
+      const { clientRequest } = options
+      const clientResponse = options.clientResponse || responseStream
+
+      if (
+        (accountType === 'claude-official' || accountType === 'claude-console') &&
+        clientRequest &&
+        clientResponse
+      ) {
+        const concurrencyConfig = this._resolveConcurrencyConfig(account)
+
+        if (concurrencyConfig?.enabled) {
+          try {
+            logger.debug(
+              `🔒 [Stream] Concurrency control enabled for ${accountId}, config:`,
+              concurrencyConfig
+            )
+            await concurrencyManager.waitForSlot(
+              accountId,
+              concurrencyConfig,
+              clientRequest,
+              clientResponse
+            )
+            logger.debug(`✅ [Stream] Acquired concurrency slot for ${accountId}`)
+          } catch (error) {
+            if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
+              logger.warn(
+                `🚫 [Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
+              )
+              // 流式响应：设置状态码和发送错误事件
+              responseStream.writeHead(429, {
+                'Content-Type': 'text/event-stream',
+                'Retry-After': '10'
+              })
+              responseStream.write(
+                `event: error\ndata: ${JSON.stringify({
+                  error: 'concurrency_limit_exceeded',
+                  message: error.message
+                })}\n\n`
+              )
+              responseStream.end()
+              return
+            } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
+              logger.warn(
+                `⏱️ [Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
+              )
+              responseStream.writeHead(503, {
+                'Content-Type': 'text/event-stream',
+                'Retry-After': Math.ceil(error.timeout / 2).toString()
+              })
+              responseStream.write(
+                `event: error\ndata: ${JSON.stringify({
+                  error: 'concurrency_timeout',
+                  message: error.message
+                })}\n\n`
+              )
+              responseStream.end()
+              return
+            } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
+              logger.info(
+                `🔌 [Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
+              )
+              // 客户端已断开，直接结束流
+              if (!responseStream.headersSent) {
+                responseStream.writeHead(499, {})
+              }
+              responseStream.end()
+              return
+            }
+            // 其他错误继续抛出
+            throw error
+          }
+        }
+      }
+
+      await registerSessionForAccount(accountSelection, sessionContext)
 
       const isDedicatedOfficialAccount =
         accountType === 'claude-official' &&
@@ -1214,7 +1476,7 @@ class ClaudeRelayService {
       // 获取有效的访问token
       const accessToken = await claudeAccountService.getValidAccessToken(accountId)
 
-      const processedBody = this._processRequestBody(requestBody, account)
+      const processedBody = this._processRequestBody(requestBody, account, apiKeyData)
 
       // 获取代理配置
       const proxyAgent = await this._getProxyAgent(accountId)
@@ -1237,6 +1499,8 @@ class ClaudeRelayService {
         options,
         isDedicatedOfficialAccount
       )
+
+      await refreshSessionRetention(accountSelection, sessionContext)
     } catch (error) {
       logger.error(`❌ Claude stream relay with usage capture failed:`, error)
       throw error
@@ -1920,7 +2184,7 @@ class ClaudeRelayService {
           responseStream.write(
             `data: ${JSON.stringify({
               error: 'Request timeout',
-              code: 'TIMEOUT',
+              code: CONCURRENCY_ERRORS.TIMEOUT,
               timestamp: new Date().toISOString()
             })}\n\n`
           )
@@ -2126,6 +2390,34 @@ class ClaudeRelayService {
     }
 
     return 0 // 两个版本号相等
+  }
+
+  _resolveConcurrencyConfig(account) {
+    if (!account || !account.concurrencyControl) {
+      return null
+    }
+
+    let rawConfig = account.concurrencyControl
+
+    if (typeof rawConfig === 'string') {
+      const trimmed = rawConfig.trim()
+      if (!trimmed) {
+        return null
+      }
+
+      try {
+        rawConfig = JSON.parse(trimmed)
+      } catch (error) {
+        logger.error(
+          `❌ Invalid concurrencyControl JSON for ${account.id || 'unknown account'}:`,
+          error.message
+        )
+        return null
+      }
+    }
+
+    const normalized = concurrencyManager.normalizeConfig(rawConfig)
+    return normalized.enabled ? normalized : null
   }
 
   // 🎯 健康检查

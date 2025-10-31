@@ -371,21 +371,20 @@
             </div>
           </div>
 
-          <div>
-            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >并发限制</label
-            >
-            <input
-              v-model="form.concurrencyLimit"
-              class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400"
-              min="0"
-              placeholder="0 表示无限制"
-              type="number"
-            />
-            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-              设置此 API Key 可同时处理的最大请求数
-            </p>
-          </div>
+          <!-- 并发控制配置 -->
+          <ConcurrencyConfigCard
+            v-model="form.concurrencyConfig"
+            description="限制此 API Key 的最大并发请求数，超出时可选择排队等待或立即拒绝"
+            :placeholders="{
+              maxConcurrency: '10',
+              queueSize: '20',
+              queueTimeout: '120'
+            }"
+            title="启用并发控制"
+          />
+
+          <!-- 会话并发控制配置 -->
+          <SessionConcurrencyConfigCard v-model="form.sessionConcurrencyConfig" />
 
           <!-- 激活账号 -->
           <div>
@@ -732,6 +731,8 @@ import { useClientsStore } from '@/stores/clients'
 import { useApiKeysStore } from '@/stores/apiKeys'
 import { apiClient } from '@/config/api'
 import AccountSelector from '@/components/common/AccountSelector.vue'
+import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
+import SessionConcurrencyConfigCard from '@/components/common/SessionConcurrencyConfigCard.vue'
 
 const props = defineProps({
   apiKey: {
@@ -774,6 +775,41 @@ const localAccounts = ref({
   droidGroups: []
 })
 
+const CONCURRENCY_SERVICE_OPTIONS = ['claude', 'gemini', 'openai', 'droid']
+
+const sanitizeTargetServices = (services) => {
+  if (!Array.isArray(services)) {
+    return []
+  }
+
+  const unique = new Set()
+  services.forEach((service) => {
+    if (typeof service !== 'string') {
+      return
+    }
+    const value = service.trim().toLowerCase()
+    if (value && CONCURRENCY_SERVICE_OPTIONS.includes(value)) {
+      unique.add(value)
+    }
+  })
+
+  return Array.from(unique)
+}
+
+const buildConcurrencyPayload = () => ({
+  enabled: !!form.concurrencyConfig.enabled,
+  maxConcurrency: form.concurrencyConfig.maxConcurrency,
+  queueSize: form.concurrencyConfig.queueSize,
+  queueTimeout: form.concurrencyConfig.queueTimeout,
+  targetServices: sanitizeTargetServices(form.concurrencyConfig.targetServices)
+})
+
+const buildSessionConcurrencyPayload = () => ({
+  enabled: !!form.sessionConcurrencyConfig.enabled,
+  maxSessions: form.sessionConcurrencyConfig.maxSessions,
+  windowSeconds: form.sessionConcurrencyConfig.windowSeconds
+})
+
 // 支持的客户端列表
 const supportedClients = ref([])
 
@@ -796,7 +832,18 @@ const form = reactive({
   rateLimitWindow: '',
   rateLimitRequests: '',
   rateLimitCost: '', // 新增：费用限制
-  concurrencyLimit: '',
+  concurrencyConfig: {
+    enabled: false,
+    maxConcurrency: 10,
+    queueSize: 20,
+    queueTimeout: 120,
+    targetServices: []
+  },
+  sessionConcurrencyConfig: {
+    enabled: false,
+    maxSessions: 10,
+    windowSeconds: 3600
+  },
   dailyCostLimit: '',
   totalCostLimit: '',
   weeklyOpusCostLimit: '',
@@ -905,10 +952,8 @@ const updateApiKey = async () => {
         form.rateLimitCost !== '' && form.rateLimitCost !== null
           ? parseFloat(form.rateLimitCost)
           : 0,
-      concurrencyLimit:
-        form.concurrencyLimit !== '' && form.concurrencyLimit !== null
-          ? parseInt(form.concurrencyLimit)
-          : 0,
+      concurrencyConfig: buildConcurrencyPayload(),
+      sessionConcurrencyConfig: buildSessionConcurrencyPayload(),
       dailyCostLimit:
         form.dailyCostLimit !== '' && form.dailyCostLimit !== null
           ? parseFloat(form.dailyCostLimit)
@@ -1211,7 +1256,46 @@ onMounted(async () => {
 
   form.rateLimitWindow = props.apiKey.rateLimitWindow || ''
   form.rateLimitRequests = props.apiKey.rateLimitRequests || ''
-  form.concurrencyLimit = props.apiKey.concurrencyLimit || ''
+  if (props.apiKey.concurrencyConfig) {
+    const config = props.apiKey.concurrencyConfig
+    form.concurrencyConfig = {
+      enabled: config.enabled ?? false,
+      maxConcurrency: Object.prototype.hasOwnProperty.call(config, 'maxConcurrency')
+        ? config.maxConcurrency
+        : 10,
+      queueSize: Object.prototype.hasOwnProperty.call(config, 'queueSize') ? config.queueSize : 20,
+      queueTimeout: Object.prototype.hasOwnProperty.call(config, 'queueTimeout')
+        ? config.queueTimeout
+        : 120,
+      targetServices: sanitizeTargetServices(config.targetServices)
+    }
+  } else {
+    form.concurrencyConfig = {
+      enabled: false,
+      maxConcurrency: 10,
+      queueSize: 20,
+      queueTimeout: 120,
+      targetServices: []
+    }
+  }
+  if (props.apiKey.sessionConcurrencyConfig) {
+    const sessionConfig = props.apiKey.sessionConcurrencyConfig
+    form.sessionConcurrencyConfig = {
+      enabled: sessionConfig.enabled ?? false,
+      maxSessions: Object.prototype.hasOwnProperty.call(sessionConfig, 'maxSessions')
+        ? sessionConfig.maxSessions
+        : 10,
+      windowSeconds: Object.prototype.hasOwnProperty.call(sessionConfig, 'windowSeconds')
+        ? sessionConfig.windowSeconds
+        : 3600
+    }
+  } else {
+    form.sessionConcurrencyConfig = {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600
+    }
+  }
   form.dailyCostLimit = props.apiKey.dailyCostLimit || ''
   form.totalCostLimit = props.apiKey.totalCostLimit || ''
   form.weeklyOpusCostLimit = props.apiKey.weeklyOpusCostLimit || ''

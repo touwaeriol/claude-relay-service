@@ -250,18 +250,65 @@
             </p>
           </div>
 
-          <!-- 并发限制 -->
-          <div>
-            <label class="mb-3 block text-sm font-semibold text-gray-700 dark:text-gray-300"
-              >并发限制</label
+          <!-- 并发控制 -->
+          <div class="space-y-3">
+            <div class="flex items-start justify-between">
+              <label class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                并发控制
+              </label>
+              <label
+                class="flex cursor-pointer items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+              >
+                <input
+                  v-model="form.applyConcurrencyConfig"
+                  class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                  type="checkbox"
+                />
+                <span>启用批量更新</span>
+              </label>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              勾选后可统一修改所选 API Key 的并发控制策略。未勾选时将保持原有配置不变。
+            </p>
+            <div
+              v-if="form.applyConcurrencyConfig"
+              class="rounded-lg border border-gray-200 bg-white/60 p-3 dark:border-gray-700 dark:bg-gray-900/40"
             >
-            <input
-              v-model="form.concurrencyLimit"
-              class="form-input w-full border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
-              min="0"
-              placeholder="不修改 (0 表示无限制)"
-              type="number"
-            />
+              <ConcurrencyConfigCard
+                v-model="form.concurrencyConfig"
+                description="限制 API Key 的最大同时请求数以及排队策略"
+                :placeholders="{
+                  maxConcurrency: '10',
+                  queueSize: '20',
+                  queueTimeout: '120'
+                }"
+                title="启用并发控制"
+              />
+            </div>
+            <div class="flex items-start justify-between">
+              <label class="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                会话并发
+              </label>
+              <label
+                class="flex cursor-pointer items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+              >
+                <input
+                  v-model="form.applySessionConcurrencyConfig"
+                  class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                  type="checkbox"
+                />
+                <span>启用批量更新</span>
+              </label>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">
+              勾选后可统一修改所选 API Key 的会话并发限制。未勾选时将保持原有配置不变。
+            </p>
+            <div
+              v-if="form.applySessionConcurrencyConfig"
+              class="rounded-lg border border-gray-200 bg-white/60 p-3 dark:border-gray-700 dark:bg-gray-900/40"
+            >
+              <SessionConcurrencyConfigCard v-model="form.sessionConcurrencyConfig" />
+            </div>
           </div>
 
           <!-- 激活状态 -->
@@ -450,6 +497,8 @@ import { showToast } from '@/utils/toast'
 import { useApiKeysStore } from '@/stores/apiKeys'
 import { apiClient } from '@/config/api'
 import AccountSelector from '@/components/common/AccountSelector.vue'
+import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
+import SessionConcurrencyConfigCard from '@/components/common/SessionConcurrencyConfigCard.vue'
 
 const props = defineProps({
   selectedKeys: {
@@ -502,12 +551,46 @@ const unselectedTags = computed(() => {
   return availableTags.value.filter((tag) => !form.tags.includes(tag))
 })
 
+const CONCURRENCY_SERVICE_OPTIONS = ['claude', 'gemini', 'openai', 'droid']
+
+const sanitizeTargetServices = (services) => {
+  if (!Array.isArray(services)) {
+    return []
+  }
+
+  const unique = new Set()
+  services.forEach((service) => {
+    if (typeof service !== 'string') {
+      return
+    }
+    const value = service.trim().toLowerCase()
+    if (value && CONCURRENCY_SERVICE_OPTIONS.includes(value)) {
+      unique.add(value)
+    }
+  })
+
+  return Array.from(unique)
+}
+
 // 表单数据
 const form = reactive({
   rateLimitCost: '', // 费用限制替代token限制
   rateLimitWindow: '',
   rateLimitRequests: '',
-  concurrencyLimit: '',
+  applyConcurrencyConfig: false,
+  concurrencyConfig: {
+    enabled: false,
+    maxConcurrency: 10,
+    queueSize: 20,
+    queueTimeout: 120,
+    targetServices: []
+  },
+  applySessionConcurrencyConfig: false,
+  sessionConcurrencyConfig: {
+    enabled: false,
+    maxSessions: 10,
+    windowSeconds: 3600
+  },
   dailyCostLimit: '',
   totalCostLimit: '',
   weeklyOpusCostLimit: '', // 新增Opus周费用限制
@@ -703,8 +786,31 @@ const batchUpdateApiKeys = async () => {
     if (form.rateLimitRequests !== '' && form.rateLimitRequests !== null) {
       updates.rateLimitRequests = parseInt(form.rateLimitRequests)
     }
-    if (form.concurrencyLimit !== '' && form.concurrencyLimit !== null) {
-      updates.concurrencyLimit = parseInt(form.concurrencyLimit)
+    if (form.applyConcurrencyConfig) {
+      const maxConcurrency = Number(form.concurrencyConfig.maxConcurrency)
+      const queueSize = Number(form.concurrencyConfig.queueSize)
+      const queueTimeout = Number(form.concurrencyConfig.queueTimeout)
+
+      updates.concurrencyConfig = {
+        enabled: !!form.concurrencyConfig.enabled,
+        maxConcurrency:
+          Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? Math.floor(maxConcurrency) : 10,
+        queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? Math.floor(queueSize) : 20,
+        queueTimeout:
+          Number.isFinite(queueTimeout) && queueTimeout > 0 ? Math.floor(queueTimeout) : 120,
+        targetServices: sanitizeTargetServices(form.concurrencyConfig.targetServices)
+      }
+    }
+    if (form.applySessionConcurrencyConfig) {
+      const maxSessions = Number(form.sessionConcurrencyConfig.maxSessions)
+      const windowSeconds = Number(form.sessionConcurrencyConfig.windowSeconds)
+
+      updates.sessionConcurrencyConfig = {
+        enabled: !!form.sessionConcurrencyConfig.enabled,
+        maxSessions: Number.isFinite(maxSessions) && maxSessions > 0 ? Math.floor(maxSessions) : 10,
+        windowSeconds:
+          Number.isFinite(windowSeconds) && windowSeconds >= 60 ? Math.floor(windowSeconds) : 3600
+      }
     }
     if (form.dailyCostLimit !== '' && form.dailyCostLimit !== null) {
       updates.dailyCostLimit = parseFloat(form.dailyCostLimit)

@@ -227,16 +227,93 @@
 
         <!-- 其他限制信息 -->
         <div class="space-y-4 border-t border-gray-100 pt-3 dark:border-gray-700">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发限制</span>
-            <span class="text-sm font-medium text-gray-900 md:text-base">
-              <span v-if="statsData.limits.concurrencyLimit > 0">
-                {{ statsData.limits.concurrencyLimit }}
+          <div class="flex flex-col gap-2">
+            <div class="flex items-start justify-between gap-4">
+              <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">并发控制</span>
+              <span class="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                Realtime
               </span>
-              <span v-else class="flex items-center gap-1">
-                <i class="fas fa-infinity text-gray-400" />
+            </div>
+            <template v-if="hasConcurrencyLimits">
+              <div class="flex flex-wrap items-center gap-2 font-mono text-base md:text-lg">
+                <span
+                  :class="
+                    concurrencyLimits.sessionEnabled
+                      ? 'text-sky-600 dark:text-sky-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.sessionEnabled ? concurrencyLimits.maxSessions : '--' }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    concurrencyLimits.sessionEnabled && concurrencyLimits.currentSessions > 0
+                      ? 'text-sky-500 dark:text-sky-200'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.sessionEnabled ? concurrencyLimits.currentSessions : '--' }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    concurrencyLimits.queueEnabled
+                      ? 'text-blue-600 dark:text-blue-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.maxQueueSize : '--' }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    concurrencyLimits.queueEnabled && concurrencyLimits.currentWaiting > 0
+                      ? 'text-orange-600 dark:text-orange-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.currentWaiting : '--' }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    concurrencyLimits.queueEnabled
+                      ? 'text-green-600 dark:text-green-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.maxConcurrency : '--' }}
+                </span>
+                <span class="text-gray-400">/</span>
+                <span
+                  :class="
+                    concurrencyLimits.queueEnabled && concurrencyLimits.currentRunning > 0
+                      ? 'text-purple-600 dark:text-purple-300'
+                      : 'text-gray-400 dark:text-gray-600'
+                  "
+                >
+                  {{ concurrencyLimits.queueEnabled ? concurrencyLimits.currentRunning : '--' }}
+                </span>
+              </div>
+              <div
+                class="flex flex-wrap items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400"
+              >
+                <span>会话/活跃</span>
+                <span>队列/等待</span>
+                <span>并发/运行</span>
+                <span>
+                  超时
+                  {{ concurrencyLimits.queueEnabled ? `${concurrencyLimits.queueTimeout}s` : '--' }}
+                </span>
+              </div>
+            </template>
+            <template v-else>
+              <span class="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+                <i class="fas fa-power-off text-xs" />
+                未启用
               </span>
-            </span>
+            </template>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm text-gray-600 dark:text-gray-400 md:text-base">模型限制</span>
@@ -328,6 +405,35 @@ import WindowCountdown from '@/components/apikeys/WindowCountdown.vue'
 
 const apiStatsStore = useApiStatsStore()
 const { statsData, multiKeyMode, aggregatedStats, invalidKeys } = storeToRefs(apiStatsStore)
+
+const concurrencyLimits = computed(() => {
+  const limits = statsData.value?.limits || {}
+  const config = limits.concurrencyConfig || {}
+
+  return {
+    sessionEnabled: limits.sessionEnabled === true,
+    maxSessions: Number.isFinite(limits.maxSessions) ? limits.maxSessions : 0,
+    currentSessions: Number.isFinite(limits.currentSessions) ? limits.currentSessions : 0,
+    queueEnabled: config.enabled === true,
+    maxQueueSize: Number.isFinite(limits.maxQueueSize)
+      ? limits.maxQueueSize
+      : Number.isFinite(config.queueSize)
+        ? config.queueSize
+        : 0,
+    currentWaiting: Number.isFinite(limits.currentWaiting) ? limits.currentWaiting : 0,
+    maxConcurrency: Number.isFinite(limits.maxConcurrency)
+      ? limits.maxConcurrency
+      : Number.isFinite(config.maxConcurrency)
+        ? config.maxConcurrency
+        : 0,
+    currentRunning: Number.isFinite(limits.currentRunning) ? limits.currentRunning : 0,
+    queueTimeout: Number.isFinite(config.queueTimeout) ? config.queueTimeout : 0
+  }
+})
+
+const hasConcurrencyLimits = computed(
+  () => concurrencyLimits.value.sessionEnabled || concurrencyLimits.value.queueEnabled
+)
 
 const hasModelRestrictions = computed(() => {
   const restriction = statsData.value?.restrictions

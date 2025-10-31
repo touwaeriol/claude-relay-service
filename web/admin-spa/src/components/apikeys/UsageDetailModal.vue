@@ -194,15 +194,97 @@
                 </div>
               </div>
 
-              <div
-                v-if="apiKey.concurrencyLimit > 0"
-                class="flex items-center justify-between rounded-lg border border-purple-200/70 bg-white/60 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:bg-purple-950/20"
-              >
-                <span class="text-gray-600 dark:text-gray-300">并发限制</span>
-                <span class="font-semibold text-purple-600 dark:text-purple-300">
-                  {{ apiKey.currentConcurrency || 0 }} / {{ apiKey.concurrencyLimit }}
-                </span>
-              </div>
+              <template v-if="concurrencyConfig.enabled || concurrencyDetails.sessionEnabled">
+                <!-- 并发控制 - 分列显示 -->
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <!-- 会话并发 -->
+                  <div
+                    v-if="concurrencyDetails.sessionEnabled"
+                    class="space-y-2 rounded-lg border border-sky-200/70 bg-gradient-to-r from-sky-50 to-blue-50 px-3 py-2 text-sm shadow-sm dark:border-sky-500/40 dark:from-sky-900/20 dark:to-blue-900/20"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-600 dark:text-gray-300">会话并发</span>
+                      <span class="text-xs text-gray-400 dark:text-gray-500">Realtime</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono text-base">
+                      <span class="font-semibold text-sky-600 dark:text-sky-300">
+                        {{ concurrencyDetails.maxSessions }}
+                      </span>
+                      <span class="text-gray-400">/</span>
+                      <span
+                        :class="
+                          (concurrencyDetails.currentSessions ?? 0) > 0
+                            ? 'text-sky-500 dark:text-sky-200'
+                            : 'text-gray-400 dark:text-gray-600'
+                        "
+                      >
+                        {{ concurrencyDetails.currentSessions ?? 0 }}
+                      </span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 dark:text-gray-400">会话/活跃</div>
+                  </div>
+
+                  <!-- 请求并发 -->
+                  <div
+                    v-if="concurrencyDetails.enabled"
+                    class="space-y-2 rounded-lg border border-purple-200/70 bg-gradient-to-r from-purple-50 to-pink-50 px-3 py-2 text-sm shadow-sm dark:border-purple-500/40 dark:from-purple-900/20 dark:to-pink-900/20"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-gray-600 dark:text-gray-300">请求并发</span>
+                      <span class="text-xs text-gray-400 dark:text-gray-500">Realtime</span>
+                    </div>
+                    <div class="flex items-center gap-2 font-mono text-base">
+                      <!-- 队列/等待 -->
+                      <div class="flex items-center gap-1">
+                        <span class="font-semibold text-blue-600 dark:text-blue-300">
+                          {{ concurrencyDetails.maxQueueSize ?? '--' }}
+                        </span>
+                        <span class="text-gray-400">/</span>
+                        <span
+                          :class="
+                            (concurrencyDetails.currentWaiting ?? 0) > 0
+                              ? 'text-orange-600 dark:text-orange-300'
+                              : 'text-gray-400 dark:text-gray-600'
+                          "
+                        >
+                          {{ concurrencyDetails.currentWaiting ?? 0 }}
+                        </span>
+                      </div>
+                      <span class="text-gray-400">|</span>
+                      <!-- 并发/运行 -->
+                      <div class="flex items-center gap-1">
+                        <span class="font-semibold text-green-600 dark:text-green-300">
+                          {{ concurrencyDetails.maxConcurrency ?? '--' }}
+                        </span>
+                        <span class="text-gray-400">/</span>
+                        <span
+                          :class="
+                            (concurrencyDetails.currentRunning ?? 0) > 0
+                              ? 'text-purple-600 dark:text-purple-300'
+                              : 'text-gray-400 dark:text-gray-600'
+                          "
+                        >
+                          {{ concurrencyDetails.currentRunning ?? 0 }}
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      class="flex flex-wrap items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400"
+                    >
+                      <span>队列/等待</span>
+                      <span>并发/运行</span>
+                      <span>
+                        超时
+                        {{
+                          concurrencyDetails.queueTimeout !== null
+                            ? `${concurrencyDetails.queueTimeout}s`
+                            : '--'
+                        }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </template>
 
               <div v-if="apiKey.rateLimitWindow > 0" class="space-y-2">
                 <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -275,11 +357,34 @@ const cacheReadTokens = computed(() => props.apiKey.usage?.total?.cacheReadToken
 const rpm = computed(() => props.apiKey.usage?.averages?.rpm || 0)
 const tpm = computed(() => props.apiKey.usage?.averages?.tpm || 0)
 
+const concurrencyConfig = computed(() => {
+  const raw = props.apiKey.concurrencyConfig
+  if (raw && typeof raw === 'object') {
+    const maxConcurrency = Number(raw.maxConcurrency)
+    const queueSize = Number(raw.queueSize)
+    const queueTimeout = Number(raw.queueTimeout)
+
+    return {
+      enabled: !!raw.enabled,
+      maxConcurrency: Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : 10,
+      queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? queueSize : 20,
+      queueTimeout: Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 120
+    }
+  }
+
+  return {
+    enabled: false,
+    maxConcurrency: 10,
+    queueSize: 20,
+    queueTimeout: 120
+  }
+})
+
 const hasLimits = computed(() => {
   return (
     props.apiKey.dailyCostLimit > 0 ||
     props.apiKey.totalCostLimit > 0 ||
-    props.apiKey.concurrencyLimit > 0 ||
+    concurrencyConfig.value.enabled ||
     props.apiKey.weeklyOpusCostLimit > 0 ||
     props.apiKey.rateLimitWindow > 0 ||
     props.apiKey.tokenLimit > 0
@@ -299,6 +404,49 @@ const totalUsagePercentage = computed(() => {
 const opusUsagePercentage = computed(() => {
   if (!weeklyOpusCostLimit.value || weeklyOpusCostLimit.value === 0) return 0
   return (weeklyOpusCost.value / weeklyOpusCostLimit.value) * 100
+})
+
+const concurrencyDetails = computed(() => {
+  const stats = props.apiKey.concurrencyStats || {}
+  const enabled = concurrencyConfig.value.enabled
+  const sessionEnabled = !!stats.sessionEnabled
+
+  const parseNumber = (value) => {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : 0
+  }
+
+  const maxSessions = sessionEnabled ? parseNumber(stats.maxSessions) : null
+  const currentSessions = sessionEnabled ? parseNumber(stats.currentSessions) : null
+  const maxQueueSize = enabled ? parseNumber(concurrencyConfig.value.queueSize) : null
+  const currentWaiting =
+    enabled &&
+    (stats.currentWaiting !== undefined || props.apiKey.currentConcurrencyQueue !== undefined)
+      ? parseNumber(stats.currentWaiting ?? props.apiKey.currentConcurrencyQueue)
+      : null
+  const maxConcurrency = enabled ? parseNumber(concurrencyConfig.value.maxConcurrency) : null
+  const currentRunning =
+    enabled && (stats.currentRunning !== undefined || props.apiKey.currentConcurrency !== undefined)
+      ? parseNumber(stats.currentRunning ?? props.apiKey.currentConcurrency)
+      : null
+  const queueTimeout =
+    enabled &&
+    concurrencyConfig.value.queueTimeout !== undefined &&
+    concurrencyConfig.value.queueTimeout !== null
+      ? parseNumber(concurrencyConfig.value.queueTimeout)
+      : null
+
+  return {
+    enabled,
+    sessionEnabled,
+    maxSessions,
+    currentSessions,
+    maxQueueSize,
+    currentWaiting,
+    maxConcurrency,
+    currentRunning,
+    queueTimeout
+  }
 })
 
 // 方法

@@ -1577,46 +1577,81 @@
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                   </p>
-                  <div v-if="form.useUnifiedClientId" class="mt-3">
-                    <div
-                      class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
-                    >
-                      <div class="mb-2 flex items-center justify-between">
-                        <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                          >客户端标识 ID</span
-                        >
-                        <button
-                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                          type="button"
-                          @click="regenerateClientId"
-                        >
-                          <i class="fas fa-sync-alt mr-1" />
-                          重新生成
-                        </button>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <code
-                          class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                        >
-                          <span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(0, 8)
-                          }}</span
-                          ><span class="text-gray-500 dark:text-gray-500">{{
-                            form.unifiedClientId.substring(8, 56)
-                          }}</span
-                          ><span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(56)
-                          }}</span>
-                        </code>
-                      </div>
-                      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        <i class="fas fa-info-circle mr-1 text-blue-500" />
-                        此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
-                      </p>
+                  <div
+                    v-if="form.useUnifiedClientId"
+                    class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+                  >
+                    <div class="mb-2 flex items-center justify-between">
+                      <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
+                        >客户端标识 ID</span
+                      >
+                      <button
+                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                        type="button"
+                        @click="regenerateClientId"
+                      >
+                        <i class="fas fa-sync-alt mr-1" />
+                        重新生成
+                      </button>
                     </div>
+                    <div class="flex items-center gap-2">
+                      <code
+                        class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                      >
+                        <span class="text-blue-600 dark:text-blue-400">{{
+                          form.unifiedClientId.substring(0, 8)
+                        }}</span
+                        ><span class="text-gray-500 dark:text-gray-500">{{
+                          form.unifiedClientId.substring(8, 56)
+                        }}</span
+                        ><span class="text-blue-600 dark:text-blue-400">{{
+                          form.unifiedClientId.substring(56)
+                        }}</span>
+                      </code>
+                    </div>
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-info-circle mr-1 text-blue-500" />
+                      此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                    </p>
                   </div>
                 </div>
               </label>
+              <div class="mt-3 flex items-start">
+                <input
+                  v-model="form.rewriteSessionId"
+                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                />
+                <div class="ml-3">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    替换会话 ID
+                  </span>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    开启后，将基于账户和会话信息生成新的 session
+                    UUID，避免相同会话在不同账户上复用同一个 ID。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 并发控制配置（创建模式） -->
+            <div v-if="supportsConcurrencyConfig" class="mt-4 space-y-4">
+              <ConcurrencyConfigCard
+                v-model="concurrencyConfig"
+                description="启用后，限制该账户的最大并发请求数和队列长度"
+                :placeholders="{
+                  maxConcurrency: '默认10',
+                  queueSize: '默认20',
+                  queueTimeout: '默认120'
+                }"
+                :show-service-selector="false"
+                title="启用并发控制"
+              />
+
+              <SessionConcurrencyConfigCard
+                v-model="sessionConcurrencyConfig"
+                :show-claude-only-note="false"
+              />
             </div>
 
             <!-- 所有平台的优先级设置 -->
@@ -2384,46 +2419,81 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                 </p>
-                <div v-if="form.useUnifiedClientId" class="mt-3">
-                  <div
-                    class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
-                  >
-                    <div class="mb-2 flex items-center justify-between">
-                      <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                        >客户端标识 ID</span
-                      >
-                      <button
-                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                        type="button"
-                        @click="regenerateClientId"
-                      >
-                        <i class="fas fa-sync-alt mr-1" />
-                        重新生成
-                      </button>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <code
-                        class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                      >
-                        <span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(0, 8)
-                        }}</span
-                        ><span class="text-gray-500 dark:text-gray-500">{{
-                          form.unifiedClientId.substring(8, 56)
-                        }}</span
-                        ><span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(56)
-                        }}</span>
-                      </code>
-                    </div>
-                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                      <i class="fas fa-info-circle mr-1 text-blue-500" />
-                      此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
-                    </p>
+                <div
+                  v-if="form.useUnifiedClientId"
+                  class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+                >
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
+                      >客户端标识 ID</span
+                    >
+                    <button
+                      class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                      type="button"
+                      @click="regenerateClientId"
+                    >
+                      <i class="fas fa-sync-alt mr-1" />
+                      重新生成
+                    </button>
                   </div>
+                  <div class="flex items-center gap-2">
+                    <code
+                      class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                    >
+                      <span class="text-blue-600 dark:text-blue-400">{{
+                        form.unifiedClientId.substring(0, 8)
+                      }}</span
+                      ><span class="text-gray-500 dark:text-gray-500">{{
+                        form.unifiedClientId.substring(8, 56)
+                      }}</span
+                      ><span class="text-blue-600 dark:text-blue-400">{{
+                        form.unifiedClientId.substring(56)
+                      }}</span>
+                    </code>
+                  </div>
+                  <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    <i class="fas fa-info-circle mr-1 text-blue-500" />
+                    此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                  </p>
                 </div>
               </div>
             </label>
+            <div class="mt-3 flex items-start">
+              <input
+                v-model="form.rewriteSessionId"
+                class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                type="checkbox"
+              />
+              <div class="ml-3">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  替换会话 ID
+                </span>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  开启后，将基于账户和会话信息生成新的 session
+                  UUID，避免相同会话在不同账户上复用同一个 ID。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 并发控制配置（编辑模式） -->
+          <div v-if="supportsConcurrencyConfig" class="mt-4 space-y-4">
+            <ConcurrencyConfigCard
+              v-model="concurrencyConfig"
+              description="启用后，限制该账户的最大并发请求数和队列长度"
+              :placeholders="{
+                maxConcurrency: '默认10',
+                queueSize: '默认20',
+                queueTimeout: '默认120'
+              }"
+              :show-service-selector="false"
+              title="启用并发控制"
+            />
+
+            <SessionConcurrencyConfigCard
+              v-model="sessionConcurrencyConfig"
+              :show-claude-only-note="false"
+            />
           </div>
 
           <!-- 所有平台的优先级设置（编辑模式） -->
@@ -3311,6 +3381,8 @@ import OAuthFlow from './OAuthFlow.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import GroupManagementModal from './GroupManagementModal.vue'
 import ApiKeyManagementModal from './ApiKeyManagementModal.vue'
+import ConcurrencyConfigCard from '@/components/common/ConcurrencyConfigCard.vue'
+import SessionConcurrencyConfigCard from '@/components/common/SessionConcurrencyConfigCard.vue'
 
 const props = defineProps({
   account: {
@@ -3460,6 +3532,61 @@ const normalizeProxyFormState = (rawProxy) => {
   return createDefaultProxyState()
 }
 
+const coerceNumberOrDefault = (value, fallback) => {
+  if (value === null || value === undefined || value === '') {
+    return fallback
+  }
+  const num = Number(value)
+  return Number.isFinite(num) ? num : fallback
+}
+
+const extractConcurrencyValue = (concurrencyConfig, key, fallback) => {
+  if (!concurrencyConfig) {
+    return fallback
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return fallback
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return fallback
+  }
+
+  return coerceNumberOrDefault(parsed[key], fallback)
+}
+
+const extractConcurrencyEnabled = (concurrencyConfig) => {
+  if (!concurrencyConfig) {
+    return false
+  }
+
+  let parsed = concurrencyConfig
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch (error) {
+      return false
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return false
+  }
+
+  return (
+    parsed.enabled === true ||
+    parsed.enabled === 'true' ||
+    parsed.enabled === 1 ||
+    parsed.enabled === '1'
+  )
+}
+
 const buildProxyPayload = (proxyState) => {
   if (!proxyState || !proxyState.enabled) {
     return null
@@ -3507,6 +3634,8 @@ const form = ref({
   useUnifiedUserAgent: props.account?.useUnifiedUserAgent || false, // 使用统一Claude Code版本
   useUnifiedClientId: props.account?.useUnifiedClientId || false, // 使用统一的客户端标识
   unifiedClientId: props.account?.unifiedClientId || '', // 统一的客户端标识
+  rewriteSessionId:
+    props.account?.rewriteSessionId !== undefined ? !!props.account?.rewriteSessionId : false,
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -3538,6 +3667,24 @@ const form = ref({
   })(),
   userAgent: props.account?.userAgent || '',
   enableRateLimit: props.account ? props.account.rateLimitDuration > 0 : true,
+  // 并发控制字段
+  enableConcurrencyControl: extractConcurrencyEnabled(props.account?.concurrencyControl),
+  maxConcurrency: extractConcurrencyValue(props.account?.concurrencyControl, 'maxConcurrency', 10),
+  queueSize: extractConcurrencyValue(props.account?.concurrencyControl, 'queueSize', 20),
+  queueTimeout: Math.max(
+    1,
+    extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120)
+  ),
+  // 会话并发控制字段
+  enableSessionConcurrencyControl: extractConcurrencyEnabled(
+    props.account?.sessionConcurrencyConfig
+  ),
+  maxSessions: extractConcurrencyValue(props.account?.sessionConcurrencyConfig, 'maxSessions', 10),
+  windowSeconds: extractConcurrencyValue(
+    props.account?.sessionConcurrencyConfig,
+    'windowSeconds',
+    3600
+  ),
   // 额度管理字段
   dailyQuota: props.account?.dailyQuota || 0,
   dailyUsage: props.account?.dailyUsage || 0,
@@ -3572,6 +3719,36 @@ const form = ref({
   expiresAt: props.account?.expiresAt || null
 })
 
+// 并发配置计算属性（用于 ConcurrencyConfigCard 组件）
+const concurrencyConfig = computed({
+  get: () => ({
+    enabled: form.value.enableConcurrencyControl,
+    maxConcurrency: form.value.maxConcurrency,
+    queueSize: form.value.queueSize,
+    queueTimeout: form.value.queueTimeout
+  }),
+  set: (value) => {
+    form.value.enableConcurrencyControl = value.enabled
+    form.value.maxConcurrency = value.maxConcurrency
+    form.value.queueSize = value.queueSize
+    form.value.queueTimeout = value.queueTimeout
+  }
+})
+
+// 会话并发配置计算属性（用于 SessionConcurrencyConfigCard 组件）
+const sessionConcurrencyConfig = computed({
+  get: () => ({
+    enabled: form.value.enableSessionConcurrencyControl,
+    maxSessions: form.value.maxSessions,
+    windowSeconds: form.value.windowSeconds
+  }),
+  set: (value) => {
+    form.value.enableSessionConcurrencyControl = value.enabled
+    form.value.maxSessions = value.maxSessions
+    form.value.windowSeconds = value.windowSeconds
+  }
+})
+
 // 模型限制配置
 const modelRestrictionMode = ref('whitelist') // 'whitelist' 或 'mapping'
 const allowedModels = ref([
@@ -3597,6 +3774,13 @@ const commonModels = [
 
 // 模型映射表数据
 const modelMappings = ref([])
+
+// 判断是否支持并发控制配置的显示范围
+const supportsConcurrencyConfig = computed(() => {
+  // Claude 平台（包括 OAuth、Setup Token）和 Claude Console 平台支持可视化并发配置
+  // CCR 等其他平台暂不开放 UI 设置
+  return form.value.platform === 'claude' || form.value.platform === 'claude-console'
+})
 
 // 初始化模型映射表
 const initModelMappings = () => {
@@ -4041,12 +4225,26 @@ const handleOAuthSuccess = async (tokenInfo) => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
         hasClaudeMax: form.value.subscriptionType === 'claude_max',
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
+      }
+      // 添加并发控制配置
+      data.concurrencyControl = {
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
     } else if (currentPlatform === 'gemini') {
       // Gemini使用geminiOauth字段
@@ -4345,12 +4543,26 @@ const createAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
         hasClaudeMax: form.value.subscriptionType === 'claude_max',
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
+      }
+      // 添加并发控制配置
+      data.concurrencyControl = {
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
     } else if (form.value.platform === 'gemini') {
       // Gemini手动模式需要构建geminiOauth对象
@@ -4436,6 +4648,19 @@ const createAccount = async () => {
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
+      // 添加并发控制配置
+      data.concurrencyControl = {
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 添加会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
+      }
     } else if (form.value.platform === 'openai-responses') {
       // OpenAI-Responses 账户特定数据
       data.baseApi = form.value.baseApi
@@ -4705,12 +4930,26 @@ const updateAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 更新订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
         hasClaudeMax: form.value.subscriptionType === 'claude_max',
         hasClaudePro: form.value.subscriptionType === 'claude_pro',
         manuallySet: true // 标记为手动设置
+      }
+      // 并发控制配置
+      data.concurrencyControl = {
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
       }
     }
 
@@ -4738,6 +4977,19 @@ const updateAccount = async () => {
       // 额度管理字段
       data.dailyQuota = form.value.dailyQuota || 0
       data.quotaResetTime = form.value.quotaResetTime || '00:00'
+      // 并发控制配置
+      data.concurrencyControl = {
+        enabled: !!form.value.enableConcurrencyControl,
+        maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
+        queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+      }
+      // 会话并发控制配置
+      data.sessionConcurrencyConfig = {
+        enabled: !!form.value.enableSessionConcurrencyControl,
+        maxSessions: coerceNumberOrDefault(form.value.maxSessions, 10),
+        windowSeconds: Math.max(60, coerceNumberOrDefault(form.value.windowSeconds, 3600))
+      }
     }
 
     // OpenAI-Responses 特定更新
@@ -5155,6 +5407,9 @@ watch(
     if (!isEdit.value) {
       emit('platform-changed', newPlatform)
     }
+    if (newPlatform !== 'claude') {
+      form.value.rewriteSessionId = false
+    }
   }
 )
 
@@ -5282,6 +5537,8 @@ watch(
         useUnifiedUserAgent: newAccount.useUnifiedUserAgent || false,
         useUnifiedClientId: newAccount.useUnifiedClientId || false,
         unifiedClientId: newAccount.unifiedClientId || '',
+        rewriteSessionId:
+          newAccount.rewriteSessionId !== undefined ? !!newAccount.rewriteSessionId : false,
         groupId: groupId,
         groupIds: [],
         projectId: newAccount.projectId || '',
@@ -5312,6 +5569,32 @@ watch(
         enableRateLimit:
           newAccount.rateLimitDuration && newAccount.rateLimitDuration > 0 ? true : false,
         rateLimitDuration: newAccount.rateLimitDuration || 60,
+        // 并发控制相关字段
+        enableConcurrencyControl: extractConcurrencyEnabled(newAccount.concurrencyControl),
+        maxConcurrency: extractConcurrencyValue(
+          newAccount.concurrencyControl,
+          'maxConcurrency',
+          10
+        ),
+        queueSize: extractConcurrencyValue(newAccount.concurrencyControl, 'queueSize', 20),
+        queueTimeout: Math.max(
+          1,
+          extractConcurrencyValue(newAccount.concurrencyControl, 'queueTimeout', 120)
+        ),
+        // 会话并发控制相关字段
+        enableSessionConcurrencyControl: extractConcurrencyEnabled(
+          newAccount.sessionConcurrencyConfig
+        ),
+        maxSessions: extractConcurrencyValue(
+          newAccount.sessionConcurrencyConfig,
+          'maxSessions',
+          10
+        ),
+        windowSeconds: extractConcurrencyValue(
+          newAccount.sessionConcurrencyConfig,
+          'windowSeconds',
+          3600
+        ),
         // Bedrock 特定字段
         accessKeyId: '', // 编辑模式不显示现有的访问密钥
         secretAccessKey: '', // 编辑模式不显示现有的秘密密钥
@@ -5526,6 +5809,15 @@ watch(
   (newPlatform) => {
     if (newPlatform === 'claude') {
       fetchUnifiedUserAgent()
+    }
+  }
+)
+
+watch(
+  () => form.value.queueTimeout,
+  (newValue) => {
+    if (newValue !== undefined && newValue !== null && newValue <= 0) {
+      form.value.queueTimeout = 1
     }
   }
 )
