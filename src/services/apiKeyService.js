@@ -3,6 +3,10 @@ const { v4: uuidv4 } = require('uuid')
 const config = require('../../config/config')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
+const concurrencyManager = require('./concurrencyManager')
+const {
+  normalizeConfig: normalizeSessionConcurrencyConfig
+} = require('../utils/sessionConcurrencyConfigHelper')
 
 const ACCOUNT_TYPE_CONFIG = {
   claude: { prefix: 'claude:account:' },
@@ -82,7 +86,8 @@ class ApiKeyService {
       droidAccountId = null,
       permissions = 'all', // 可选值：'claude'、'gemini'、'openai'、'droid' 或 'all'
       isActive = true,
-      concurrencyLimit = 0,
+      concurrencyConfig = null, // 新增：并发控制配置对象 {enabled, maxConcurrency, queueSize, queueTimeout}
+      sessionConcurrencyConfig = null, // 新增：会话并发配置对象 {enabled, maxSessions, windowSeconds}
       rateLimitWindow = null,
       rateLimitRequests = null,
       rateLimitCost = null, // 新增：速率限制费用字段
@@ -105,13 +110,21 @@ class ApiKeyService {
     const keyId = uuidv4()
     const hashedKey = this._hashApiKey(apiKey)
 
+    const normalizedConcurrencyConfig = concurrencyManager.normalizeConfig(
+      concurrencyConfig || config.defaults.concurrency
+    )
+    const normalizedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+      sessionConcurrencyConfig || config.defaults.sessionConcurrency
+    )
+
     const keyData = {
       id: keyId,
       name,
       description,
       apiKey: hashedKey,
       tokenLimit: String(tokenLimit ?? 0),
-      concurrencyLimit: String(concurrencyLimit ?? 0),
+      concurrencyConfig: JSON.stringify(normalizedConcurrencyConfig), // 并发控制配置（JSON字符串）
+      sessionConcurrencyConfig: JSON.stringify(normalizedSessionConcurrencyConfig),
       rateLimitWindow: String(rateLimitWindow ?? 0),
       rateLimitRequests: String(rateLimitRequests ?? 0),
       rateLimitCost: String(rateLimitCost ?? 0), // 新增：速率限制费用字段
@@ -151,13 +164,26 @@ class ApiKeyService {
 
     logger.success(`🔑 Generated new API key: ${name} (${keyId})`)
 
+    const parsedConcurrencyConfig = concurrencyManager.normalizeConfig(
+      JSON.parse(keyData.concurrencyConfig || JSON.stringify(config.defaults.concurrency))
+    )
+    const parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+      JSON.parse(
+        keyData.sessionConcurrencyConfig || JSON.stringify(config.defaults.sessionConcurrency)
+      )
+    )
+
     return {
       id: keyId,
       apiKey, // 只在创建时返回完整的key
       name: keyData.name,
       description: keyData.description,
       tokenLimit: parseInt(keyData.tokenLimit),
-      concurrencyLimit: parseInt(keyData.concurrencyLimit),
+      concurrencyConfig: parsedConcurrencyConfig,
+      concurrencyLimit: parsedConcurrencyConfig.enabled
+        ? parsedConcurrencyConfig.maxConcurrency
+        : 0,
+      sessionConcurrencyConfig: parsedSessionConcurrencyConfig,
       rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
       rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
       rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -302,6 +328,37 @@ class ApiKeyService {
         tags = []
       }
 
+      // 解析并发控制配置（只解析一次，复用结果）
+      let parsedConcurrencyConfig
+      try {
+        const rawConcurrencyConfig = JSON.parse(
+          keyData.concurrencyConfig || JSON.stringify(config.defaults.concurrency)
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(rawConcurrencyConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse concurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(config.defaults.concurrency)
+      }
+
+      let parsedSessionConcurrencyConfig
+      try {
+        const rawSessionConfig = JSON.parse(
+          keyData.sessionConcurrencyConfig || JSON.stringify(config.defaults.sessionConcurrency)
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(rawSessionConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse sessionConcurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+          config.defaults.sessionConcurrency
+        )
+      }
+
       return {
         valid: true,
         keyData: {
@@ -319,7 +376,11 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
+          concurrencyConfig: parsedConcurrencyConfig,
+          concurrencyLimit: parsedConcurrencyConfig.enabled
+            ? parsedConcurrencyConfig.maxConcurrency
+            : 0,
+          sessionConcurrencyConfig: parsedSessionConcurrencyConfig,
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -423,6 +484,37 @@ class ApiKeyService {
         tags = []
       }
 
+      // 解析并发控制配置（只解析一次，复用结果）
+      let parsedConcurrencyConfig
+      try {
+        const rawConcurrencyConfig = JSON.parse(
+          keyData.concurrencyConfig || JSON.stringify(config.defaults.concurrency)
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(rawConcurrencyConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse concurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(config.defaults.concurrency)
+      }
+
+      let parsedSessionConcurrencyConfig
+      try {
+        const rawSessionConfig = JSON.parse(
+          keyData.sessionConcurrencyConfig || JSON.stringify(config.defaults.sessionConcurrency)
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(rawSessionConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse sessionConcurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+          config.defaults.sessionConcurrency
+        )
+      }
+
       return {
         valid: true,
         keyData: {
@@ -446,7 +538,11 @@ class ApiKeyService {
           droidAccountId: keyData.droidAccountId,
           permissions: keyData.permissions || 'all',
           tokenLimit: parseInt(keyData.tokenLimit),
-          concurrencyLimit: parseInt(keyData.concurrencyLimit || 0),
+          concurrencyConfig: parsedConcurrencyConfig,
+          concurrencyLimit: parsedConcurrencyConfig.enabled
+            ? parsedConcurrencyConfig.maxConcurrency
+            : 0,
+          sessionConcurrencyConfig: parsedSessionConcurrencyConfig,
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0),
@@ -494,11 +590,50 @@ class ApiKeyService {
         }
         key.totalCost = costStats ? costStats.total : 0
         key.tokenLimit = parseInt(key.tokenLimit)
-        key.concurrencyLimit = parseInt(key.concurrencyLimit || 0)
+        try {
+          const rawConcurrencyConfig = JSON.parse(
+            key.concurrencyConfig || JSON.stringify(config.defaults.concurrency)
+          )
+          key.concurrencyConfig = concurrencyManager.normalizeConfig(rawConcurrencyConfig)
+        } catch (e) {
+          key.concurrencyConfig = concurrencyManager.normalizeConfig(config.defaults.concurrency)
+        }
+        try {
+          const rawSessionConfig = JSON.parse(
+            key.sessionConcurrencyConfig || JSON.stringify(config.defaults.sessionConcurrency)
+          )
+          key.sessionConcurrencyConfig = normalizeSessionConcurrencyConfig(rawSessionConfig)
+        } catch (e) {
+          key.sessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+            config.defaults.sessionConcurrency
+          )
+        }
+        key.concurrencyLimit = key.concurrencyConfig.enabled
+          ? key.concurrencyConfig.maxConcurrency
+          : 0
         key.rateLimitWindow = parseInt(key.rateLimitWindow || 0)
         key.rateLimitRequests = parseInt(key.rateLimitRequests || 0)
         key.rateLimitCost = parseFloat(key.rateLimitCost || 0) // 新增：速率限制费用字段
-        key.currentConcurrency = await redis.getConcurrency(key.id)
+        const concurrencyStats = await concurrencyManager.getStats(`apikey:${key.id}`)
+        const currentRunning = concurrencyStats ? concurrencyStats.running : 0
+        const currentWaiting = concurrencyStats ? concurrencyStats.waiting : 0
+        key.currentConcurrency = currentRunning
+        key.currentConcurrencyQueue = currentWaiting
+        key.concurrencyStats = {
+          sessionEnabled: false,
+          maxSessions: 0,
+          currentSessions: 0,
+          maxQueueSize:
+            key.concurrencyConfig.enabled && Number.isFinite(key.concurrencyConfig.queueSize)
+              ? Number(key.concurrencyConfig.queueSize)
+              : 0,
+          currentWaiting,
+          maxConcurrency:
+            key.concurrencyConfig.enabled && Number.isFinite(key.concurrencyConfig.maxConcurrency)
+              ? Number(key.concurrencyConfig.maxConcurrency)
+              : 0,
+          currentRunning
+        }
         key.isActive = key.isActive === 'true'
         key.enableModelRestriction = key.enableModelRestriction === 'true'
         key.enableClientRestriction = key.enableClientRestriction === 'true'
@@ -647,7 +782,8 @@ class ApiKeyService {
         'name',
         'description',
         'tokenLimit',
-        'concurrencyLimit',
+        'concurrencyConfig',
+        'sessionConcurrencyConfig',
         'rateLimitWindow',
         'rateLimitRequests',
         'rateLimitCost', // 新增：速率限制费用字段
@@ -685,6 +821,17 @@ class ApiKeyService {
           if (field === 'restrictedModels' || field === 'allowedClients' || field === 'tags') {
             // 特殊处理数组字段
             updatedData[field] = JSON.stringify(value || [])
+          } else if (field === 'concurrencyConfig') {
+            // 特殊处理并发配置对象
+            const normalizedUpdate = concurrencyManager.normalizeConfig(
+              value || config.defaults.concurrency
+            )
+            updatedData[field] = JSON.stringify(normalizedUpdate)
+          } else if (field === 'sessionConcurrencyConfig') {
+            const normalizedUpdate = normalizeSessionConcurrencyConfig(
+              value || config.defaults.sessionConcurrency
+            )
+            updatedData[field] = JSON.stringify(normalizedUpdate)
           } else if (
             field === 'enableModelRestriction' ||
             field === 'enableClientRestriction' ||

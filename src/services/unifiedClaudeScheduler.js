@@ -5,6 +5,7 @@ const ccrAccountService = require('./ccrAccountService')
 const accountGroupService = require('./accountGroupService')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
+// const config = require('../../config/config') // 暂时未使用
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
 
 class UnifiedClaudeScheduler {
@@ -20,6 +21,44 @@ class UnifiedClaudeScheduler {
     }
     // 明确设置为 false（布尔值）或 'false'（字符串）时不可调度
     return schedulable !== false && schedulable !== 'false'
+  }
+
+  /**
+   * 应用会话资格过滤规则（基于粘性会话）
+   * @param {Array} accounts - 候选账户列表
+   * @param {Object} sessionContext - 会话上下文 { sessionHash, isNewSession }
+   * @returns {Array} 过滤后的账户列表
+   */
+  async _applySessionEligibilityRules(accounts, sessionContext) {
+    if (!sessionContext || !Array.isArray(accounts) || accounts.length === 0) {
+      return accounts
+    }
+
+    const { sessionHash } = sessionContext
+
+    if (!sessionHash) {
+      return accounts
+    }
+
+    const stickyAccountId = await redis.getSessionAccountMapping(sessionHash)
+
+    if (!stickyAccountId) {
+      return accounts
+    }
+
+    const matchedAccounts = accounts.filter((account) => {
+      const accountId = account.accountId || account.id
+      return accountId === stickyAccountId
+    })
+
+    if (matchedAccounts.length > 0) {
+      return matchedAccounts
+    }
+
+    logger.debug(
+      `⚠️ Sticky session binding ${stickyAccountId.substring(0, 8)}... not found in candidate pool, falling back to available accounts`
+    )
+    return accounts
   }
 
   // 🔍 检查账户是否支持请求的模型
@@ -139,8 +178,14 @@ class UnifiedClaudeScheduler {
   }
 
   // 🎯 统一调度Claude账号（官方和Console）
-  async selectAccountForApiKey(apiKeyData, sessionHash = null, requestedModel = null) {
+  async selectAccountForApiKey(
+    apiKeyData,
+    sessionHash = null,
+    requestedModel = null,
+    options = {}
+  ) {
     try {
+      const sessionContext = options.sessionContext || null
       // 解析供应商前缀
       const { vendor, baseModel } = parseVendorPrefixedModel(requestedModel)
       const effectiveModel = vendor === 'ccr' ? baseModel : requestedModel
@@ -170,7 +215,8 @@ class UnifiedClaudeScheduler {
             groupId,
             sessionHash,
             effectiveModel,
-            vendor === 'ccr'
+            vendor === 'ccr',
+            sessionContext
           )
         }
 
@@ -195,12 +241,14 @@ class UnifiedClaudeScheduler {
             if (isOpusRequest) {
               await claudeAccountService.clearExpiredOpusRateLimit(boundAccount.id)
             }
+
             logger.info(
               `🎯 Using bound dedicated Claude OAuth account: ${boundAccount.name} (${apiKeyData.claudeAccountId}) for API key ${apiKeyData.name}`
             )
             return {
               accountId: apiKeyData.claudeAccountId,
-              accountType: 'claude-official'
+              accountType: 'claude-official',
+              account: boundAccount
             }
           }
         } else {
@@ -226,7 +274,8 @@ class UnifiedClaudeScheduler {
           )
           return {
             accountId: apiKeyData.claudeConsoleAccountId,
-            accountType: 'claude-console'
+            accountType: 'claude-console',
+            account: boundConsoleAccount
           }
         } else {
           logger.warn(
@@ -279,12 +328,27 @@ class UnifiedClaudeScheduler {
               effectiveModel
             )
             if (isAvailable) {
+              let accountDetails = null
+              const _canUseStickyMapping = true
+
+              if (mappedAccount.accountType === 'claude-official') {
+                accountDetails = await redis.getClaudeAccount(mappedAccount.accountId)
+              } else if (mappedAccount.accountType === 'claude-console') {
+                accountDetails = await claudeConsoleAccountService.getAccount(
+                  mappedAccount.accountId
+                )
+              }
+
               // 🚀 智能会话续期：剩余时间少于14天时自动续期到15天（续期正确的 unified 映射键）
               await this._extendSessionMappingTTL(sessionHash)
               logger.info(
                 `🎯 Using sticky session account: ${mappedAccount.accountId} (${mappedAccount.accountType}) for session ${sessionHash}`
               )
-              return mappedAccount
+              return {
+                accountId: mappedAccount.accountId,
+                accountType: mappedAccount.accountType,
+                account: accountDetails || null
+              }
             } else {
               logger.warn(
                 `⚠️ Mapped account ${mappedAccount.accountId} is no longer available, selecting new account`
@@ -296,10 +360,15 @@ class UnifiedClaudeScheduler {
       }
 
       // 获取所有可用账户（传递请求的模型进行过滤）
-      const availableAccounts = await this._getAllAvailableAccounts(
+      let availableAccounts = await this._getAllAvailableAccounts(
         apiKeyData,
         effectiveModel,
         false // 仅前缀才走 CCR：默认池不包含 CCR 账户
+      )
+
+      availableAccounts = await this._applySessionEligibilityRules(
+        availableAccounts,
+        sessionContext
       )
 
       if (availableAccounts.length === 0) {
@@ -337,7 +406,8 @@ class UnifiedClaudeScheduler {
 
       return {
         accountId: selectedAccount.accountId,
-        accountType: selectedAccount.accountType
+        accountType: selectedAccount.accountType,
+        account: selectedAccount
       }
     } catch (error) {
       logger.error('❌ Failed to select account for API key:', error)
@@ -1134,7 +1204,8 @@ class UnifiedClaudeScheduler {
     groupId,
     sessionHash = null,
     requestedModel = null,
-    allowCcr = false
+    allowCcr = false,
+    _sessionContext = null
   ) {
     try {
       // 获取分组信息

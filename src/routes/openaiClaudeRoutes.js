@@ -13,6 +13,11 @@ const apiKeyService = require('../services/apiKeyService')
 const unifiedClaudeScheduler = require('../services/unifiedClaudeScheduler')
 const claudeCodeHeadersService = require('../services/claudeCodeHeadersService')
 const sessionHelper = require('../utils/sessionHelper')
+const {
+  buildSessionContext,
+  registerSessionForAccount,
+  refreshSessionRetention
+} = require('../utils/claudeSessionCoordinator')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const pricingService = require('../services/pricingService')
 
@@ -215,14 +220,30 @@ async function handleChatCompletion(req, res, apiKeyData) {
     // 生成会话哈希用于sticky会话
     const sessionHash = sessionHelper.generateSessionHash(claudeRequest)
 
+    let sessionContext
+    try {
+      sessionContext = await buildSessionContext(sessionHash, claudeRequest)
+    } catch (error) {
+      logger.warn(`⚠️ Session validation failed: ${error.message}`)
+      return res.status(422).json({
+        error: {
+          message: error.message,
+          type: 'session_error',
+          code: error.code || 'SESSION_VALIDATION_FAILED'
+        }
+      })
+    }
+
     // 选择可用的Claude账户
     let accountSelection
     try {
       accountSelection = await unifiedClaudeScheduler.selectAccountForApiKey(
         apiKeyData,
         sessionHash,
-        claudeRequest.model
+        claudeRequest.model,
+        { sessionContext }
       )
+      await registerSessionForAccount(accountSelection, sessionContext)
     } catch (error) {
       if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
         const limitMessage = claudeRelayService._buildStandardRateLimitMessage(error.rateLimitEndAt)
@@ -313,9 +334,12 @@ async function handleChatCompletion(req, res, apiKeyData) {
         })(),
         {
           betaHeader:
-            'oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14'
+            'oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14',
+          sessionContext,
+          preselectedAccount: accountSelection
         }
       )
+      await refreshSessionRetention(accountSelection, sessionContext)
     } else {
       // 非流式请求
       logger.info(`📄 Processing OpenAI non-stream request for model: ${req.body.model}`)
@@ -327,8 +351,13 @@ async function handleChatCompletion(req, res, apiKeyData) {
         req,
         res,
         claudeCodeHeaders,
-        { betaHeader: 'oauth-2025-04-20' }
+        {
+          betaHeader: 'oauth-2025-04-20',
+          sessionContext,
+          preselectedAccount: accountSelection
+        }
       )
+      await refreshSessionRetention(accountSelection, sessionContext)
 
       // 解析 Claude 响应
       let claudeData

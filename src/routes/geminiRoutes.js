@@ -9,6 +9,8 @@ const sessionHelper = require('../utils/sessionHelper')
 const unifiedGeminiScheduler = require('../services/unifiedGeminiScheduler')
 const apiKeyService = require('../services/apiKeyService')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
+const concurrencyManager = require('../services/concurrencyManager')
+const config = require('../../config/config')
 // const { OAuth2Client } = require('google-auth-library'); // OAuth2Client is not used in this file
 
 // 生成会话哈希
@@ -318,6 +320,19 @@ router.get('/key-info', authenticateApiKey, async (req, res) => {
   try {
     const keyData = req.apiKey
 
+    const concurrencyConfig = concurrencyManager.normalizeConfig(
+      keyData.concurrencyConfig && typeof keyData.concurrencyConfig === 'object'
+        ? keyData.concurrencyConfig
+        : config.defaults.concurrency
+    )
+
+    const derivedConcurrencyLimit =
+      typeof keyData.concurrencyLimit === 'number'
+        ? keyData.concurrencyLimit
+        : concurrencyConfig.enabled
+          ? concurrencyConfig.maxConcurrency
+          : 0
+
     res.json({
       id: keyData.id,
       name: keyData.name,
@@ -332,7 +347,8 @@ router.get('/key-info', authenticateApiKey, async (req, res) => {
         window: keyData.rateLimitWindow,
         requests: keyData.rateLimitRequests
       },
-      concurrency_limit: keyData.concurrencyLimit,
+      concurrency_limit: derivedConcurrencyLimit,
+      concurrency_config: concurrencyConfig,
       model_restrictions: {
         enabled: keyData.enableModelRestriction,
         models: keyData.restrictedModels

@@ -5,6 +5,8 @@ const apiKeyService = require('../services/apiKeyService')
 const CostCalculator = require('../utils/costCalculator')
 const claudeAccountService = require('../services/claudeAccountService')
 const openaiAccountService = require('../services/openaiAccountService')
+const concurrencyManager = require('../services/concurrencyManager')
+const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
 
 const router = express.Router()
 
@@ -135,11 +137,18 @@ router.post('/api/user-stats', async (req, res) => {
         allowedClients = []
       }
 
+      const concurrencyConfig = concurrencyManager.normalizeConfig(keyData.concurrencyConfig)
+
+      const derivedConcurrencyLimit = concurrencyConfig.enabled
+        ? concurrencyConfig.maxConcurrency
+        : 0
+
       // 格式化 keyData
       keyData = {
         ...keyData,
         tokenLimit: parseInt(keyData.tokenLimit) || 0,
-        concurrencyLimit: parseInt(keyData.concurrencyLimit) || 0,
+        concurrencyConfig,
+        concurrencyLimit: derivedConcurrencyLimit,
         rateLimitWindow: parseInt(keyData.rateLimitWindow) || 0,
         rateLimitRequests: parseInt(keyData.rateLimitRequests) || 0,
         dailyCostLimit: parseFloat(keyData.dailyCostLimit) || 0,
@@ -200,6 +209,14 @@ router.post('/api/user-stats', async (req, res) => {
 
     // 获取验证结果中的完整keyData（包含isActive状态和cost信息）
     const fullKeyData = keyData
+
+    const concurrencyConfig = concurrencyManager.normalizeConfig(fullKeyData.concurrencyConfig)
+
+    const derivedConcurrencyLimit = concurrencyConfig.enabled ? concurrencyConfig.maxConcurrency : 0
+
+    const concurrencyStats = await concurrencyManager.getStats(`apikey:${keyId}`)
+    const currentConcurrency = concurrencyStats ? concurrencyStats.running : 0
+    const currentConcurrencyQueue = concurrencyStats ? concurrencyStats.waiting : 0
 
     // 计算总费用 - 使用与模型统计相同的逻辑（按模型分别计算）
     let totalCost = 0
@@ -381,6 +398,29 @@ router.post('/api/user-stats', async (req, res) => {
       await Promise.allSettled(accountDetailTasks)
     }
 
+    const sessionConcurrencyConfig = fullKeyData.sessionConcurrencyConfig || {
+      enabled: false,
+      maxSessions: 0,
+      windowSeconds: 0
+    }
+
+    let currentSessions = 0
+    let sessionTtl = 0
+    if (sessionConcurrencyConfig.enabled) {
+      try {
+        const sessionStats = await sessionConcurrencyManager.getAccountStats(`apikey:${keyId}`)
+        if (sessionStats) {
+          currentSessions = sessionStats.current || 0
+          sessionTtl = sessionStats.ttl || 0
+        }
+      } catch (error) {
+        logger.warn(
+          `⚠️ Failed to get session concurrency stats for API key ${keyId}:`,
+          error.message
+        )
+      }
+    }
+
     // 构建响应数据（只返回该API Key自己的信息，确保不泄露其他信息）
     const responseData = {
       id: keyId,
@@ -416,7 +456,19 @@ router.post('/api/user-stats', async (req, res) => {
       // 限制信息（显示配置和当前使用量）
       limits: {
         tokenLimit: fullKeyData.tokenLimit || 0,
-        concurrencyLimit: fullKeyData.concurrencyLimit || 0,
+        concurrencyLimit: derivedConcurrencyLimit,
+        concurrencyConfig,
+        sessionEnabled: sessionConcurrencyConfig.enabled,
+        maxSessions: sessionConcurrencyConfig.enabled ? sessionConcurrencyConfig.maxSessions : 0,
+        currentSessions: sessionConcurrencyConfig.enabled ? currentSessions : 0,
+        sessionWindowSeconds: sessionConcurrencyConfig.enabled
+          ? sessionConcurrencyConfig.windowSeconds
+          : 0,
+        sessionTtl,
+        maxQueueSize: concurrencyConfig.enabled ? concurrencyConfig.queueSize || 0 : 0,
+        currentWaiting: currentConcurrencyQueue,
+        maxConcurrency: concurrencyConfig.enabled ? concurrencyConfig.maxConcurrency || 0 : 0,
+        currentRunning: currentConcurrency,
         rateLimitWindow: fullKeyData.rateLimitWindow || 0,
         rateLimitRequests: fullKeyData.rateLimitRequests || 0,
         rateLimitCost: parseFloat(fullKeyData.rateLimitCost) || 0, // 新增：费用限制
@@ -427,6 +479,8 @@ router.post('/api/user-stats', async (req, res) => {
         currentWindowRequests,
         currentWindowTokens,
         currentWindowCost, // 新增：当前窗口费用
+        currentConcurrency,
+        currentConcurrencyQueue,
         currentDailyCost,
         currentTotalCost: totalCost,
         weeklyOpusCost: (await redis.getWeeklyOpusCost(keyId)) || 0, // 当前 Opus 周费用

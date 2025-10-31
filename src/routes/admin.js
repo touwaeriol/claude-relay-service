@@ -10,6 +10,11 @@ const openaiAccountService = require('../services/openaiAccountService')
 const openaiResponsesAccountService = require('../services/openaiResponsesAccountService')
 const azureOpenaiAccountService = require('../services/azureOpenaiAccountService')
 const accountGroupService = require('../services/accountGroupService')
+const concurrencyManager = require('../services/concurrencyManager')
+const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
+const {
+  normalizeConfig: normalizeSessionConcurrencyConfig
+} = require('../utils/sessionConcurrencyConfigHelper')
 const redis = require('../models/redis')
 const { authenticateAdmin } = require('../middleware/auth')
 const logger = require('../utils/logger')
@@ -42,6 +47,60 @@ function normalizeNullableDate(value) {
     return trimmed === '' ? null : trimmed
   }
   return value
+}
+
+function parseConcurrencyConfigPayload(source = {}) {
+  if (!('concurrencyConfig' in source)) {
+    return { provided: false, value: null }
+  }
+
+  let rawConfig = source.concurrencyConfig
+
+  if (typeof rawConfig === 'string' && rawConfig.trim() !== '') {
+    try {
+      rawConfig = JSON.parse(rawConfig)
+    } catch (error) {
+      throw new Error('Invalid concurrencyConfig JSON')
+    }
+  }
+
+  if (rawConfig === '' || rawConfig === null || rawConfig === undefined) {
+    rawConfig = null
+  }
+
+  if (rawConfig !== null && rawConfig !== undefined && typeof rawConfig !== 'object') {
+    throw new Error('concurrencyConfig must be an object')
+  }
+
+  const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
+  return { provided: true, value: normalized }
+}
+
+function parseSessionConcurrencyConfigPayload(source = {}) {
+  if (!('sessionConcurrencyConfig' in source)) {
+    return { provided: false, value: null }
+  }
+
+  let rawConfig = source.sessionConcurrencyConfig
+
+  if (typeof rawConfig === 'string' && rawConfig.trim() !== '') {
+    try {
+      rawConfig = JSON.parse(rawConfig)
+    } catch (error) {
+      throw new Error('Invalid sessionConcurrencyConfig JSON')
+    }
+  }
+
+  if (rawConfig === '' || rawConfig === null || rawConfig === undefined) {
+    rawConfig = null
+  }
+
+  if (rawConfig !== null && rawConfig !== undefined && typeof rawConfig !== 'object') {
+    throw new Error('sessionConcurrencyConfig must be an object')
+  }
+
+  const normalized = normalizeSessionConcurrencyConfig(rawConfig || {})
+  return { provided: true, value: normalized }
 }
 
 // 🛠️ 工具函数：映射前端字段名到后端字段名
@@ -92,6 +151,116 @@ function formatAccountExpiry(account) {
     subscriptionExpiresAt,
     tokenExpiresAt,
     expiresAt: subscriptionExpiresAt
+  }
+}
+
+/**
+ * 获取账户的并发统计信息
+ * @param {Object} account - 账户对象
+ * @returns {Promise<Object>} 并发统计对象 { maxQueueSize, currentWaiting, maxConcurrency, currentRunning }
+ */
+async function getConcurrencyStats(account) {
+  // 默认值
+  const defaultStats = {
+    maxQueueSize: 0,
+    currentWaiting: 0,
+    maxConcurrency: 0,
+    currentRunning: 0,
+    maxSessions: 0,
+    currentSessions: 0,
+    sessionEnabled: false
+  }
+
+  // 检查账户是否配置了并发控制
+  if (!account) {
+    return defaultStats
+  }
+
+  try {
+    let rawConfig = account.concurrencyControl
+
+    if (typeof rawConfig === 'string') {
+      const trimmed = rawConfig.trim()
+      if (trimmed) {
+        try {
+          rawConfig = JSON.parse(trimmed)
+        } catch (parseError) {
+          logger.warn(
+            `Failed to parse concurrencyControl for account ${account.id}:`,
+            parseError.message
+          )
+          return defaultStats
+        }
+      } else {
+        rawConfig = null
+      }
+    }
+
+    const normalized = concurrencyManager.normalizeConfig(rawConfig || {})
+
+    const result = { ...defaultStats }
+
+    if (normalized.enabled) {
+      const stats = await concurrencyManager.getStats(account.id)
+      result.maxQueueSize = normalized.queueSize || 0
+      result.currentWaiting = stats?.waiting || 0
+      result.maxConcurrency = normalized.maxConcurrency || 0
+      result.currentRunning = stats?.running || 0
+    }
+
+    // 处理会话并发配置
+    const sessionDefaults = {
+      enabled: false,
+      maxSessions: 0,
+      windowSeconds: 3600
+    }
+
+    let sessionConfig = sessionDefaults
+    if (account.sessionConcurrencyConfig) {
+      if (typeof account.sessionConcurrencyConfig === 'string') {
+        try {
+          sessionConfig = {
+            ...sessionDefaults,
+            ...JSON.parse(account.sessionConcurrencyConfig)
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to parse sessionConcurrencyConfig for account ${account.id}:`,
+            error.message
+          )
+          sessionConfig = sessionDefaults
+        }
+      } else if (typeof account.sessionConcurrencyConfig === 'object') {
+        sessionConfig = {
+          ...sessionDefaults,
+          ...account.sessionConcurrencyConfig
+        }
+      }
+    }
+
+    let currentSessions = 0
+    if (sessionConfig.enabled) {
+      try {
+        const sessionStats = await sessionConcurrencyManager.getAccountStats(account.id)
+        currentSessions = sessionStats?.current || 0
+      } catch (error) {
+        logger.error(
+          `Failed to fetch session concurrency stats for account ${account.id}:`,
+          error.message
+        )
+      }
+    }
+
+    if (sessionConfig.enabled) {
+      result.sessionEnabled = true
+      result.maxSessions = sessionConfig.maxSessions || 0
+      result.currentSessions = currentSessions
+    }
+
+    return result
+  } catch (error) {
+    logger.error(`Failed to get concurrency stats for account ${account.id}:`, error.message)
+    return defaultStats
   }
 }
 
@@ -604,7 +773,8 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig,
+      sessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -639,15 +809,6 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
 
     if (tokenLimit && (!Number.isInteger(Number(tokenLimit)) || Number(tokenLimit) < 0)) {
       return res.status(400).json({ error: 'Token limit must be a non-negative integer' })
-    }
-
-    if (
-      concurrencyLimit !== undefined &&
-      concurrencyLimit !== null &&
-      concurrencyLimit !== '' &&
-      (!Number.isInteger(Number(concurrencyLimit)) || Number(concurrencyLimit) < 0)
-    ) {
-      return res.status(400).json({ error: 'Concurrency limit must be a non-negative integer' })
     }
 
     if (
@@ -752,6 +913,32 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       })
     }
 
+    let normalizedConcurrencyConfig = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      if (parsedConcurrency.provided) {
+        normalizedConcurrencyConfig = parsedConcurrency.value
+      }
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
+    let normalizedSessionConcurrencyConfig = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      if (parsedSessionConcurrency.provided) {
+        normalizedSessionConcurrencyConfig = parsedSessionConcurrency.value
+      }
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid session concurrency configuration', message: error.message })
+    }
+
     const newKey = await apiKeyService.generateApiKey({
       name,
       description,
@@ -764,7 +951,8 @@ router.post('/api-keys', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig: normalizedConcurrencyConfig,
+      sessionConcurrencyConfig: normalizedSessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -806,7 +994,8 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
       bedrockAccountId,
       droidAccountId,
       permissions,
-      concurrencyLimit,
+      concurrencyConfig,
+      sessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -851,6 +1040,34 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
     }
 
     // 生成批量API Keys
+    let normalizedConcurrencyConfig = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      if (parsedConcurrency.provided) {
+        normalizedConcurrencyConfig = parsedConcurrency.value
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid concurrency configuration',
+        message: error.message
+      })
+    }
+
+    let normalizedSessionConcurrencyConfig = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      if (parsedSessionConcurrency.provided) {
+        normalizedSessionConcurrencyConfig = parsedSessionConcurrency.value
+      }
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
+    }
+
     const createdKeys = []
     const errors = []
 
@@ -869,7 +1086,8 @@ router.post('/api-keys/batch', authenticateAdmin, async (req, res) => {
           bedrockAccountId,
           droidAccountId,
           permissions,
-          concurrencyLimit,
+          concurrencyConfig: normalizedConcurrencyConfig,
+          sessionConcurrencyConfig: normalizedSessionConcurrencyConfig,
           rateLimitWindow,
           rateLimitRequests,
           rateLimitCost,
@@ -959,6 +1177,31 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
       })
     }
 
+    let batchConcurrencyProvided = false
+    let batchConcurrencyPayload = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload(updates)
+      batchConcurrencyProvided = parsedConcurrency.provided
+      batchConcurrencyPayload = parsedConcurrency.value
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
+    let batchSessionConcurrencyProvided = false
+    let batchSessionConcurrencyPayload = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload(updates)
+      batchSessionConcurrencyProvided = parsedSessionConcurrency.provided
+      batchSessionConcurrencyPayload = parsedSessionConcurrency.value
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
+    }
+
     logger.info(
       `🔄 Admin batch editing ${keyIds.length} API keys with updates: ${JSON.stringify(updates)}`
     )
@@ -994,8 +1237,11 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         if (updates.rateLimitCost !== undefined) {
           finalUpdates.rateLimitCost = updates.rateLimitCost
         }
-        if (updates.concurrencyLimit !== undefined) {
-          finalUpdates.concurrencyLimit = updates.concurrencyLimit
+        if (batchConcurrencyProvided) {
+          finalUpdates.concurrencyConfig = batchConcurrencyPayload
+        }
+        if (batchSessionConcurrencyProvided) {
+          finalUpdates.sessionConcurrencyConfig = batchSessionConcurrencyPayload
         }
         if (updates.rateLimitWindow !== undefined) {
           finalUpdates.rateLimitWindow = updates.rateLimitWindow
@@ -1026,6 +1272,9 @@ router.put('/api-keys/batch', authenticateAdmin, async (req, res) => {
         }
         if (updates.enabled !== undefined) {
           finalUpdates.enabled = updates.enabled
+        }
+        if (!batchSessionConcurrencyProvided && updates.sessionConcurrencyConfig !== undefined) {
+          finalUpdates.sessionConcurrencyConfig = updates.sessionConcurrencyConfig
         }
 
         // 处理账户绑定
@@ -1123,7 +1372,8 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
     const {
       name, // 添加名称字段
       tokenLimit,
-      concurrencyLimit,
+      concurrencyConfig,
+      sessionConcurrencyConfig,
       rateLimitWindow,
       rateLimitRequests,
       rateLimitCost,
@@ -1169,13 +1419,6 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
       updates.tokenLimit = Number(tokenLimit)
     }
 
-    if (concurrencyLimit !== undefined && concurrencyLimit !== null && concurrencyLimit !== '') {
-      if (!Number.isInteger(Number(concurrencyLimit)) || Number(concurrencyLimit) < 0) {
-        return res.status(400).json({ error: 'Concurrency limit must be a non-negative integer' })
-      }
-      updates.concurrencyLimit = Number(concurrencyLimit)
-    }
-
     if (rateLimitWindow !== undefined && rateLimitWindow !== null && rateLimitWindow !== '') {
       if (!Number.isInteger(Number(rateLimitWindow)) || Number(rateLimitWindow) < 0) {
         return res
@@ -1198,6 +1441,41 @@ router.put('/api-keys/:keyId', authenticateAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Rate limit cost must be a non-negative number' })
       }
       updates.rateLimitCost = cost
+    }
+
+    let concurrencyUpdateProvided = false
+    let concurrencyUpdatePayload = null
+    try {
+      const parsedConcurrency = parseConcurrencyConfigPayload({ concurrencyConfig })
+      concurrencyUpdateProvided = parsedConcurrency.provided
+      concurrencyUpdatePayload = parsedConcurrency.value
+    } catch (error) {
+      return res
+        .status(400)
+        .json({ error: 'Invalid concurrency configuration', message: error.message })
+    }
+
+    if (concurrencyUpdateProvided) {
+      updates.concurrencyConfig = concurrencyUpdatePayload
+    }
+
+    let sessionConcurrencyUpdateProvided = false
+    let sessionConcurrencyUpdatePayload = null
+    try {
+      const parsedSessionConcurrency = parseSessionConcurrencyConfigPayload({
+        sessionConcurrencyConfig
+      })
+      sessionConcurrencyUpdateProvided = parsedSessionConcurrency.provided
+      sessionConcurrencyUpdatePayload = parsedSessionConcurrency.value
+    } catch (error) {
+      return res.status(400).json({
+        error: 'Invalid session concurrency configuration',
+        message: error.message
+      })
+    }
+
+    if (sessionConcurrencyUpdateProvided) {
+      updates.sessionConcurrencyConfig = sessionConcurrencyUpdatePayload
     }
 
     if (claudeAccountId !== undefined) {
@@ -2186,6 +2464,9 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
             }
           }
 
+          // 获取并发统计
+          const concurrencyStats = await getConcurrencyStats(account)
+
           const formattedAccount = formatAccountExpiry(account)
           return {
             ...formattedAccount,
@@ -2197,13 +2478,15 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
               total: usageStats.total,
               averages: usageStats.averages,
               sessionWindow: sessionWindowUsage
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(`⚠️ Failed to get usage stats for account ${account.id}:`, statsError.message)
           // 如果获取统计失败，返回空统计
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2213,13 +2496,15 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 },
                 sessionWindow: null
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2229,7 +2514,8 @@ router.get('/claude-accounts', authenticateAdmin, async (req, res) => {
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 },
                 sessionWindow: null
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
@@ -2333,8 +2619,12 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedUserAgent,
       useUnifiedClientId,
       unifiedClientId,
+      rewriteSessionId,
       expiresAt,
-      extInfo
+      extInfo,
+      // 并发控制配置（对象）
+      concurrencyControl,
+      sessionConcurrencyConfig
     } = req.body
 
     if (!name) {
@@ -2378,8 +2668,12 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedUserAgent: useUnifiedUserAgent === true, // 默认为false
       useUnifiedClientId: useUnifiedClientId === true, // 默认为false
       unifiedClientId: unifiedClientId || '', // 统一的客户端标识
+      rewriteSessionId: platform === 'claude' && rewriteSessionId === true,
       expiresAt: expiresAt || null, // 账户订阅到期时间
-      extInfo: extInfo || null
+      extInfo: extInfo || null,
+      // 并发控制配置（对象）
+      concurrencyControl: concurrencyControl || null,
+      sessionConcurrencyConfig: sessionConcurrencyConfig || null
     })
 
     // 如果是分组类型，将账户添加到分组
@@ -2448,6 +2742,15 @@ router.put('/claude-accounts/:accountId', authenticateAdmin, async (req, res) =>
     const currentAccount = await claudeAccountService.getAccount(accountId)
     if (!currentAccount) {
       return res.status(404).json({ error: 'Account not found' })
+    }
+
+    if (Object.prototype.hasOwnProperty.call(mappedUpdates, 'rewriteSessionId')) {
+      if ((currentAccount.platform || '').toLowerCase() !== 'claude') {
+        delete mappedUpdates.rewriteSessionId
+      } else {
+        mappedUpdates.rewriteSessionId =
+          mappedUpdates.rewriteSessionId === true || mappedUpdates.rewriteSessionId === 'true'
+      }
     }
 
     // 处理分组的变更
@@ -2680,6 +2983,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
         try {
           const usageStats = await redis.getAccountUsageStats(account.id, 'openai')
           const groupInfos = await accountGroupService.getAccountGroups(account.id)
+          const concurrencyStats = await getConcurrencyStats(account)
 
           const formattedAccount = formatAccountExpiry(account)
           return {
@@ -2691,7 +2995,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
               daily: usageStats.daily,
               total: usageStats.total,
               averages: usageStats.averages
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(
@@ -2700,6 +3005,7 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
           )
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2710,13 +3016,15 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for Claude Console account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -2725,7 +3033,8 @@ router.get('/claude-console-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
@@ -2757,7 +3066,9 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       accountType,
       groupId,
       dailyQuota,
-      quotaResetTime
+      quotaResetTime,
+      concurrencyControl,
+      sessionConcurrencyConfig
     } = req.body
 
     if (!name || !apiUrl || !apiKey) {
@@ -2794,7 +3105,9 @@ router.post('/claude-console-accounts', authenticateAdmin, async (req, res) => {
       proxy,
       accountType: accountType || 'shared',
       dailyQuota: dailyQuota || 0,
-      quotaResetTime: quotaResetTime || '00:00'
+      quotaResetTime: quotaResetTime || '00:00',
+      concurrencyControl: concurrencyControl || null,
+      sessionConcurrencyConfig: sessionConcurrencyConfig || null
     })
 
     // 如果是分组类型，将账户添加到分组（CCR 归属 Claude 平台分组）
@@ -3107,6 +3420,7 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
         try {
           const usageStats = await redis.getAccountUsageStats(account.id)
           const groupInfos = await accountGroupService.getAccountGroups(account.id)
+          const concurrencyStats = await getConcurrencyStats(account)
 
           const formattedAccount = formatAccountExpiry(account)
           return {
@@ -3118,7 +3432,8 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
               daily: usageStats.daily,
               total: usageStats.total,
               averages: usageStats.averages
-            }
+            },
+            concurrency: concurrencyStats
           }
         } catch (statsError) {
           logger.warn(
@@ -3127,6 +3442,7 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
           )
           try {
             const groupInfos = await accountGroupService.getAccountGroups(account.id)
+            const concurrencyStats = await getConcurrencyStats(account)
             const formattedAccount = formatAccountExpiry(account)
             return {
               ...formattedAccount,
@@ -3137,13 +3453,15 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           } catch (groupError) {
             logger.warn(
               `⚠️ Failed to get group info for CCR account ${account.id}:`,
               groupError.message
             )
+            const concurrencyStats = await getConcurrencyStats(account)
             return {
               ...account,
               groupInfos: [],
@@ -3151,7 +3469,8 @@ router.get('/ccr-accounts', authenticateAdmin, async (req, res) => {
                 daily: { tokens: 0, requests: 0, allTokens: 0 },
                 total: { tokens: 0, requests: 0, allTokens: 0 },
                 averages: { rpm: 0, tpm: 0 }
-              }
+              },
+              concurrency: concurrencyStats
             }
           }
         }
