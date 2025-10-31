@@ -44,11 +44,11 @@ class ConcurrencyManager {
     /**
      * Bottleneck 实例缓存（基于 LRUCache）
      * 自动特性：
-     * - 30 分钟未访问自动删除
+     * - 30 分钟未访问自动删除（可通过 CONCURRENCY_LIMITER_CACHE_TTL 配置）
      * - get/has 时自动刷新 TTL
      * - 删除时自动断开 Bottleneck 连接
      */
-    this.limiterTtlMs = 30 * 60 * 1000
+    this.limiterTtlMs = appConfig.concurrency?.limiterCacheTtl || (30 * 60 * 1000)
     this.limiters = new LRUCache({
       max: 10000,
       ttl: this.limiterTtlMs,

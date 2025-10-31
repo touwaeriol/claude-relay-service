@@ -55,7 +55,7 @@ const redisConnectionManager = require('../utils/redisConnectionManager')
 
 // 常量
 const LRU_CACHE_MAX_ACCOUNTS = 10000
-const LRU_CACHE_TTL_MS = 30 * 60 * 1000 // 30 分钟
+const LRU_CACHE_TTL_MS = appConfig.concurrency?.sessionConfigCacheTtl || (30 * 60 * 1000) // 30 分钟（可通过 SESSION_CONFIG_CACHE_TTL 配置）
 
 class SessionConcurrencyManager {
   constructor() {
