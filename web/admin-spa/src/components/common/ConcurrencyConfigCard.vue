@@ -43,17 +43,24 @@
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                 队列长度
+                <span
+                  class="ml-1 text-yellow-600 dark:text-yellow-400"
+                  title="请勿设置过大队列"
+                  >⚠️</span
+                >
               </label>
               <input
                 class="form-input w-full rounded-lg border-gray-300 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
                 min="0"
-                :placeholder="placeholders.queueSize || '默认20'"
+                max="500"
+                :placeholder="placeholders.queueSize || '推荐 10-50'"
                 type="number"
                 :value="modelValue.queueSize"
                 @input="handleInput('queueSize', $event)"
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                设为 0 时超出立即拒绝，大于 0 时排队等待
+                设为 <code class="rounded bg-gray-100 px-1 dark:bg-gray-700">0</code>
+                时不排队，立即拒绝；不建议设置过大（推荐 10-50）
               </p>
             </div>
 

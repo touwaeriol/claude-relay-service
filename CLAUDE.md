@@ -362,6 +362,7 @@ npm run setup  # 自动生成密钥并创建管理员账户
    - 检查 Bottleneck 配置是否正确应用（使用双重检查锁定模式）
    - 查看并发统计：`skipsDueToUnchanged`（配置未变跳过）、`skipsDueToLockWait`（等待锁跳过）
    - LRU 缓存 TTL 可通过 `CONCURRENCY_LIMITER_CACHE_TTL` 和 `SESSION_CONFIG_CACHE_TTL` 配置
+   - 注意：`queueSize` 必须 >= 0，不支持无限队列
 
 ### 调试工具
 

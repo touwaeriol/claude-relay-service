@@ -141,8 +141,9 @@ class ConcurrencyManager {
     normalized.maxConcurrency = coercedMaxConcurrency < 1 ? 1 : coercedMaxConcurrency
 
     const coercedQueueSize = Math.floor(toNumber(config.queueSize, defaults.queueSize))
-    if (coercedQueueSize < -1) {
-      normalized.queueSize = -1
+    // 强制 queueSize >= 0（不支持无限队列）
+    if (coercedQueueSize < 0) {
+      normalized.queueSize = 0 // 0 表示不排队，立即拒绝
     } else {
       normalized.queueSize = coercedQueueSize
     }
@@ -246,16 +247,14 @@ class ConcurrencyManager {
     const { maxConcurrency, queueSize } = config
     const redisConnection = this._getRedisConnection()
 
-    const highWaterLevel = queueSize < 0 ? -1 : queueSize
-    const strategy = queueSize < 0 ? Bottleneck.strategy.BLOCK : Bottleneck.strategy.OVERFLOW
-
+    // 统一使用 OVERFLOW 策略（queueSize >= 0）
     const options = {
       datastore: 'ioredis',
       connection: redisConnection,
       id: resourceId, // Redis key 前缀
       maxConcurrent: maxConcurrency,
-      highWater: highWaterLevel,
-      strategy,
+      highWater: queueSize, // 直接使用 queueSize (>= 0)
+      strategy: Bottleneck.strategy.OVERFLOW, // 统一策略
       // 租约超时（防止死锁）
       timeout: 300000 // 5 分钟
     }
@@ -280,7 +279,6 @@ class ConcurrencyManager {
    */
   async _updateLimiterConfig(limiter, resourceId, config) {
     const { maxConcurrency, queueSize } = config
-    const appliedQueueSize = queueSize < 0 ? -1 : queueSize
 
     // 🔍 第一次检查（无锁 - 快速路径）
     const currentSettings = this.limiterSettings.get(resourceId) || {
@@ -324,39 +322,24 @@ class ConcurrencyManager {
         latestSettings.maxConcurrent !== maxConcurrency || latestSettings.queueSize !== queueSize
 
       if (stillNeedUpdate) {
-        const wasUnlimited = (latestSettings.queueSize ?? -1) < 0
-        const willBeUnlimited = queueSize < 0
+        // ✅ 直接更新配置（不需要重建，因为 queueSize >= 0 统一使用 OVERFLOW 策略）
+        limiter.updateSettings({
+          maxConcurrent: maxConcurrency,
+          highWater: queueSize
+        })
 
-        if (wasUnlimited !== willBeUnlimited) {
-          // 需要重新创建以应用新的策略
-          this._disposeLimiter(resourceId, limiter, 'strategy-change')
-          limiter = this._createLimiter(resourceId, config)
-          this.limiters.set(resourceId, limiter, { ttl: this.limiterTtlMs })
-          this.stats.totalCreated++
+        this.limiterSettings.set(resourceId, {
+          maxConcurrent: maxConcurrency,
+          queueSize
+        })
 
-          logger.info(
-            `🔁 Recreated Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}`
-          )
-        } else {
-          // ✅ 执行更新（原子操作）
-          limiter.updateSettings({
-            maxConcurrent: maxConcurrency,
-            highWater: appliedQueueSize
-          })
+        this.stats.totalConfigUpdates++
 
-          this.limiterSettings.set(resourceId, {
-            maxConcurrent: maxConcurrency,
-            queueSize
-          })
-
-          this.stats.totalConfigUpdates++
-
-          logger.info(
-            `🔄 Updated Bottleneck for ${resourceId}: ` +
-              `maxConcurrency=${latestSettings.maxConcurrent}->${maxConcurrency}, ` +
-              `queueSize=${latestSettings.queueSize}->${queueSize}`
-          )
-        }
+        logger.info(
+          `🔄 Updated Bottleneck for ${resourceId}: ` +
+            `maxConcurrency=${latestSettings.maxConcurrent}->${maxConcurrency}, ` +
+            `queueSize=${latestSettings.queueSize}->${queueSize}`
+        )
       } else {
         this.stats.skipsDueToUnchanged++
         logger.debug(`⏭️ Config already updated by concurrent call: ${resourceId}`)

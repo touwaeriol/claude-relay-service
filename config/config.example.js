@@ -51,9 +51,9 @@ const config = {
       // 请求并发控制默认配置
       concurrency: {
         enabled: false,
-        maxConcurrency: 10,
-        queueSize: 20,
-        queueTimeout: 120
+        maxConcurrency: 10, // 最大并发数
+        queueSize: 20, // 队列长度（>= 0，推荐 10-50，不支持无限队列）
+        queueTimeout: 120 // 队列等待超时（秒）
       },
       // 会话并发控制默认配置
       sessionConcurrency: {
