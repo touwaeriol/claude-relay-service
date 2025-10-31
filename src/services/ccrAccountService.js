@@ -234,6 +234,8 @@ class CcrAccountService {
       `[DEBUG] Final CCR account data - name: ${accountData.name}, hasApiUrl: ${!!accountData.apiUrl}, hasApiKey: ${!!accountData.apiKey}, supportedModels: ${JSON.stringify(accountData.supportedModels)}`
     )
 
+    delete accountData.sessionRetentionSeconds
+
     return accountData
   }
 

@@ -5,6 +5,7 @@ const redis = require('../models/redis')
 const logger = require('../utils/logger')
 const config = require('../../config/config')
 const LRUCache = require('../utils/lruCache')
+const concurrencyManager = require('./concurrencyManager')
 
 class ClaudeConsoleAccountService {
   constructor() {
@@ -50,6 +51,67 @@ class ClaudeConsoleAccountService {
     return parsed
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    return concurrencyManager.normalizeConfig(concurrencyControl)
+  }
+
+  _normalizeSessionConcurrencyConfig(sessionConcurrencyConfig) {
+    const configDefaults = (config?.defaults && config.defaults.sessionConcurrency) || {}
+    const defaults = {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600,
+      ...configDefaults
+    }
+
+    if (!sessionConcurrencyConfig) {
+      return { ...defaults }
+    }
+
+    let parsed = sessionConcurrencyConfig
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxSessions = clamp(coerceNumber(parsed.maxSessions, result.maxSessions), 1)
+    result.windowSeconds = clamp(coerceNumber(parsed.windowSeconds, result.windowSeconds), 60)
+
+    return result
+  }
+
   // 🏢 创建Claude Console账户
   async createAccount(options = {}) {
     const {
@@ -66,7 +128,9 @@ class ClaudeConsoleAccountService {
       accountType = 'shared', // 'dedicated' or 'shared'
       schedulable = true, // 是否可被调度
       dailyQuota = 0, // 每日额度限制（美元），0表示不限制
-      quotaResetTime = '00:00' // 额度重置时间（HH:mm格式）
+      quotaResetTime = '00:00', // 额度重置时间（HH:mm格式）
+      concurrencyControl = null, // 并发控制配置（对象）
+      sessionConcurrencyConfig = null // 会话并发控制配置（对象）
     } = options
 
     // 验证必填字段
@@ -113,7 +177,14 @@ class ClaudeConsoleAccountService {
       // 使用与统计一致的时区日期，避免边界问题
       lastResetDate: redis.getDateStringInTimezone(), // 最后重置日期（按配置时区）
       quotaResetTime, // 额度重置时间
-      quotaStoppedAt: '' // 因额度停用的时间
+      quotaStoppedAt: '', // 因额度停用的时间
+
+      // 并发控制配置（JSON 对象）
+      concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+      // 会话并发控制配置（JSON 对象）
+      sessionConcurrencyConfig: JSON.stringify(
+        this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+      )
     }
 
     const client = redis.getClientSafe()
@@ -172,6 +243,42 @@ class ClaudeConsoleAccountService {
           // 获取限流状态信息
           const rateLimitInfo = this._getRateLimitInfo(accountData)
 
+          const defaultConcurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 10,
+            queueSize: 20,
+            queueTimeout: 120
+          }
+          const defaultSessionConfig = {
+            enabled: false,
+            maxSessions: 10,
+            windowSeconds: 3600
+          }
+
+          let parsedConcurrencyControl = defaultConcurrencyConfig
+          if (accountData.concurrencyControl) {
+            try {
+              parsedConcurrencyControl = JSON.parse(accountData.concurrencyControl)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse concurrencyControl for Claude Console account ${accountData.id}: ${error.message}`
+              )
+              parsedConcurrencyControl = defaultConcurrencyConfig
+            }
+          }
+
+          let parsedSessionConcurrencyConfig = defaultSessionConfig
+          if (accountData.sessionConcurrencyConfig) {
+            try {
+              parsedSessionConcurrencyConfig = JSON.parse(accountData.sessionConcurrencyConfig)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse sessionConcurrencyConfig for Claude Console account ${accountData.id}: ${error.message}`
+              )
+              parsedSessionConcurrencyConfig = defaultSessionConfig
+            }
+          }
+
           accounts.push({
             id: accountData.id,
             platform: accountData.platform,
@@ -202,7 +309,9 @@ class ClaudeConsoleAccountService {
             dailyUsage: parseFloat(accountData.dailyUsage || '0'),
             lastResetDate: accountData.lastResetDate || '',
             quotaResetTime: accountData.quotaResetTime || '00:00',
-            quotaStoppedAt: accountData.quotaStoppedAt || null
+            quotaStoppedAt: accountData.quotaStoppedAt || null,
+            concurrencyControl: parsedConcurrencyControl,
+            sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           })
         }
       }
@@ -362,6 +471,20 @@ class ClaudeConsoleAccountService {
         } else {
           await client.srem(this.SHARED_ACCOUNTS_KEY, accountId)
         }
+      }
+
+      // 🔒 处理并发控制配置
+      if (updates.concurrencyControl !== undefined) {
+        updatedData.concurrencyControl = JSON.stringify(
+          this._normalizeConcurrencyControl(updates.concurrencyControl)
+        )
+      }
+
+      // 🔒 处理会话并发控制配置
+      if (updates.sessionConcurrencyConfig !== undefined) {
+        updatedData.sessionConcurrencyConfig = JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(updates.sessionConcurrencyConfig)
+        )
       }
 
       updatedData.updatedAt = new Date().toISOString()

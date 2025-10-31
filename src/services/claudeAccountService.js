@@ -5,6 +5,7 @@ const axios = require('axios')
 const redis = require('../models/redis')
 const config = require('../../config/config')
 const logger = require('../utils/logger')
+const concurrencyManager = require('./concurrencyManager')
 const { maskToken } = require('../utils/tokenMask')
 const {
   logRefreshStart,
@@ -54,6 +55,67 @@ class ClaudeAccountService {
     )
   }
 
+  _normalizeConcurrencyControl(concurrencyControl) {
+    return concurrencyManager.normalizeConfig(concurrencyControl)
+  }
+
+  _normalizeSessionConcurrencyConfig(sessionConcurrencyConfig) {
+    const configDefaults = (config?.defaults && config.defaults.sessionConcurrency) || {}
+    const defaults = {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600,
+      ...configDefaults
+    }
+
+    if (!sessionConcurrencyConfig) {
+      return { ...defaults }
+    }
+
+    let parsed = sessionConcurrencyConfig
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch (error) {
+        return { ...defaults }
+      }
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return { ...defaults }
+    }
+
+    const coerceNumber = (value, fallback) => {
+      if (value === null || value === undefined || value === '') {
+        return fallback
+      }
+      const num = Number(value)
+      return Number.isFinite(num) ? num : fallback
+    }
+
+    const clamp = (value, min) => {
+      if (!Number.isFinite(value)) {
+        return min
+      }
+      return value < min ? min : value
+    }
+
+    const result = { ...defaults }
+
+    if (Object.prototype.hasOwnProperty.call(parsed, 'enabled')) {
+      result.enabled =
+        parsed.enabled === true ||
+        parsed.enabled === 'true' ||
+        parsed.enabled === 1 ||
+        parsed.enabled === '1'
+    }
+
+    result.maxSessions = clamp(coerceNumber(parsed.maxSessions, result.maxSessions), 1)
+    result.windowSeconds = clamp(coerceNumber(parsed.windowSeconds, result.windowSeconds), 60)
+
+    return result
+  }
+
   // 🏢 创建Claude账户
   async createAccount(options = {}) {
     const {
@@ -75,13 +137,22 @@ class ClaudeAccountService {
       useUnifiedClientId = false, // 是否使用统一的客户端标识
       unifiedClientId = '', // 统一的客户端标识
       expiresAt = null, // 账户订阅到期时间
-      extInfo = null // 额外扩展信息
+      rewriteSessionId = false, // 是否重写会话ID
+      extInfo = null, // 额外扩展信息
+      // 并发控制配置（对象）
+      concurrencyControl = null, // { enabled, maxConcurrency, queueSize, queueTimeout }
+      // 会话并发控制配置（对象）
+      sessionConcurrencyConfig = null // { enabled, maxSessions, windowSeconds }
     } = options
 
     const accountId = uuidv4()
 
     let accountData
     const normalizedExtInfo = this._normalizeExtInfo(extInfo, claudeAiOauth)
+
+    const unifiedClientEnabled = useUnifiedClientId === true || useUnifiedClientId === 'true'
+    const rewriteSessionIdEnabled =
+      platform === 'claude' && (rewriteSessionId === true || rewriteSessionId === 'true')
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -109,7 +180,7 @@ class ClaudeAccountService {
         schedulable: schedulable.toString(), // 是否可被调度
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
-        useUnifiedClientId: useUnifiedClientId.toString(), // 是否使用统一的客户端标识
+        useUnifiedClientId: unifiedClientEnabled.toString(), // 是否使用统一的客户端标识
         unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 优先使用手动设置的订阅信息，否则使用OAuth数据中的，否则默认为空
         subscriptionInfo: subscriptionInfo
@@ -120,7 +191,14 @@ class ClaudeAccountService {
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        rewriteSessionId: rewriteSessionIdEnabled.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+        // 会话并发控制配置（JSON 对象）
+        sessionConcurrencyConfig: JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+        )
       }
     } else {
       // 兼容旧格式
@@ -147,12 +225,21 @@ class ClaudeAccountService {
         schedulable: schedulable.toString(), // 是否可被调度
         autoStopOnWarning: autoStopOnWarning.toString(), // 5小时使用量接近限制时自动停止调度
         useUnifiedUserAgent: useUnifiedUserAgent.toString(), // 是否使用统一Claude Code版本的User-Agent
+        useUnifiedClientId: unifiedClientEnabled.toString(), // 是否使用统一的客户端标识
+        unifiedClientId: unifiedClientId || '', // 统一的客户端标识
         // 手动设置的订阅信息
         subscriptionInfo: subscriptionInfo ? JSON.stringify(subscriptionInfo) : '',
         // 账户订阅到期时间
         subscriptionExpiresAt: expiresAt || '',
         // 扩展信息
-        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : ''
+        extInfo: normalizedExtInfo ? JSON.stringify(normalizedExtInfo) : '',
+        rewriteSessionId: rewriteSessionIdEnabled.toString(),
+        // 并发控制配置（JSON 对象）
+        concurrencyControl: JSON.stringify(this._normalizeConcurrencyControl(concurrencyControl)),
+        // 会话并发控制配置（JSON 对象）
+        sessionConcurrencyConfig: JSON.stringify(
+          this._normalizeSessionConcurrencyConfig(sessionConcurrencyConfig)
+        )
       }
     }
 
@@ -198,8 +285,9 @@ class ClaudeAccountService {
       scopes: claudeAiOauth ? claudeAiOauth.scopes : [],
       autoStopOnWarning,
       useUnifiedUserAgent,
-      useUnifiedClientId,
+      useUnifiedClientId: unifiedClientEnabled,
       unifiedClientId,
+      rewriteSessionId: rewriteSessionIdEnabled,
       extInfo: normalizedExtInfo
     }
   }
@@ -494,6 +582,42 @@ class ClaudeAccountService {
           const authType = isOAuth ? 'oauth' : 'setup-token'
           const parsedExtInfo = this._safeParseJson(account.extInfo)
 
+          const defaultConcurrencyConfig = {
+            enabled: false,
+            maxConcurrency: 10,
+            queueSize: 20,
+            queueTimeout: 120
+          }
+          const defaultSessionConfig = {
+            enabled: false,
+            maxSessions: 10,
+            windowSeconds: 3600
+          }
+
+          let parsedConcurrencyControl = defaultConcurrencyConfig
+          if (account.concurrencyControl) {
+            try {
+              parsedConcurrencyControl = JSON.parse(account.concurrencyControl)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse concurrencyControl for Claude account ${account.id}: ${error.message}`
+              )
+              parsedConcurrencyControl = defaultConcurrencyConfig
+            }
+          }
+
+          let parsedSessionConcurrencyConfig = defaultSessionConfig
+          if (account.sessionConcurrencyConfig) {
+            try {
+              parsedSessionConcurrencyConfig = JSON.parse(account.sessionConcurrencyConfig)
+            } catch (error) {
+              logger.warn(
+                `⚠️ Failed to parse sessionConcurrencyConfig for Claude account ${account.id}: ${error.message}`
+              )
+              parsedSessionConcurrencyConfig = defaultSessionConfig
+            }
+          }
+
           return {
             id: account.id,
             name: account.name,
@@ -555,10 +679,13 @@ class ClaudeAccountService {
             // 添加统一客户端标识设置
             useUnifiedClientId: account.useUnifiedClientId === 'true', // 默认为false
             unifiedClientId: account.unifiedClientId || '', // 统一的客户端标识
+            rewriteSessionId: account.platform === 'claude' && account.rewriteSessionId === 'true',
             // 添加停止原因
             stoppedReason: account.stoppedReason || null,
             // 扩展信息
-            extInfo: parsedExtInfo
+            extInfo: parsedExtInfo,
+            concurrencyControl: parsedConcurrencyControl,
+            sessionConcurrencyConfig: parsedSessionConcurrencyConfig
           }
         })
       )
@@ -649,8 +776,13 @@ class ClaudeAccountService {
         'useUnifiedUserAgent',
         'useUnifiedClientId',
         'unifiedClientId',
+        'rewriteSessionId',
         'subscriptionExpiresAt',
-        'extInfo'
+        'extInfo',
+        // 并发控制配置（对象）
+        'concurrencyControl',
+        // 会话并发控制配置（对象）
+        'sessionConcurrencyConfig'
       ]
       const updatedData = { ...accountData }
       let shouldClearAutoStopFields = false
@@ -696,13 +828,36 @@ class ClaudeAccountService {
                 }
               }
             }
+          } else if (field === 'rewriteSessionId') {
+            const rewriteFlag = value === true || value === 'true'
+            updatedData.rewriteSessionId = rewriteFlag.toString()
+          } else if (field === 'concurrencyControl') {
+            // 处理并发控制配置
+            updatedData[field] = JSON.stringify(this._normalizeConcurrencyControl(value))
+          } else if (field === 'sessionConcurrencyConfig') {
+            // 处理会话并发控制配置
+            updatedData[field] = JSON.stringify(this._normalizeSessionConcurrencyConfig(value))
           } else {
             updatedData[field] = value !== null && value !== undefined ? value.toString() : ''
           }
         }
       }
 
-      // 如果新增了 refresh token（之前没有，现在有了），更新过期时间为10分钟
+      const platformIsClaude = (accountData.platform || '').toLowerCase() === 'claude'
+
+      if (!platformIsClaude) {
+        updatedData.rewriteSessionId = 'false'
+      } else if (Object.prototype.hasOwnProperty.call(updates, 'rewriteSessionId')) {
+        const rewriteFlag = updates.rewriteSessionId === true || updates.rewriteSessionId === 'true'
+        updatedData.rewriteSessionId = rewriteFlag.toString()
+      } else {
+        updatedData.rewriteSessionId =
+          updatedData.rewriteSessionId === 'true' || updatedData.rewriteSessionId === true
+            ? 'true'
+            : 'false'
+      }
+
+      // 如果新增 refresh token（之前没有，现在有了），更新过期时间为10分钟
       if (updates.refreshToken && !oldRefreshToken && updates.refreshToken.trim()) {
         const newExpiresAt = Date.now() + 10 * 60 * 1000 // 10分钟
         updatedData.expiresAt = newExpiresAt.toString()
