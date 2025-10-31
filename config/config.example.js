@@ -44,23 +44,23 @@ const config = {
   concurrency: {
     // LRU 缓存 TTL（毫秒）
     limiterCacheTtl: parseInt(process.env.CONCURRENCY_LIMITER_CACHE_TTL) || 1800000, // 30分钟
-    sessionConfigCacheTtl: parseInt(process.env.SESSION_CONFIG_CACHE_TTL) || 1800000, // 30分钟
+    sessionConfigCacheTtl: parseInt(process.env.SESSION_CONFIG_CACHE_TTL) || 1800000 // 30分钟
+  },
 
-    // 默认并发配置
-    defaults: {
-      // 请求并发控制默认配置
-      concurrency: {
-        enabled: false,
-        maxConcurrency: 10, // 最大并发数
-        queueSize: 20, // 队列长度（>= 0，推荐 10-50，不支持无限队列）
-        queueTimeout: 120 // 队列等待超时（秒）
-      },
-      // 会话并发控制默认配置
-      sessionConcurrency: {
-        enabled: false,
-        maxSessions: 10,
-        windowSeconds: 3600
-      }
+  // 🎛️ 默认配置（全局默认值）
+  defaults: {
+    // 请求并发控制默认配置
+    concurrency: {
+      enabled: false,
+      maxConcurrency: 10, // 最大并发数
+      queueSize: 20, // 队列长度（>= 0，推荐 10-50，不支持无限队列）
+      queueTimeout: 120 // 队列等待超时（秒）
+    },
+    // 会话并发控制默认配置
+    sessionConcurrency: {
+      enabled: false,
+      maxSessions: 10,
+      windowSeconds: 3600
     }
   },
 
