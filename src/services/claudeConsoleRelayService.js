@@ -93,6 +93,25 @@ class ClaudeConsoleRelayService {
               accountId
             }
           } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
+            if (error.timeoutType === 'execution') {
+              logger.warn(
+                `⏱️ [Console NonStream] Concurrency execution timeout for ${accountId}: exceeded ${error.timeout || 'configured'}s`
+              )
+              return {
+                statusCode: 504,
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                  error: 'concurrency_execution_timeout',
+                  message: error.message,
+                  details: {
+                    timeout: error.timeout
+                  }
+                }),
+                accountId
+              }
+            }
             logger.warn(
               `⏱️ [Console NonStream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
             )
@@ -476,6 +495,23 @@ class ClaudeConsoleRelayService {
               responseStream.end()
               return
             } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
+              if (error.timeoutType === 'execution') {
+                logger.warn(
+                  `⏱️ [Console Stream] Concurrency execution timeout for ${accountId}: exceeded ${error.timeout || 'configured'}s`
+                )
+                responseStream.writeHead(504, {
+                  'Content-Type': 'text/event-stream'
+                })
+                responseStream.write(
+                  `event: error\ndata: ${JSON.stringify({
+                    error: 'concurrency_execution_timeout',
+                    message: error.message
+                  })}\n\n`
+                )
+                responseStream.end()
+                return
+              }
+
               logger.warn(
                 `⏱️ [Console Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
               )

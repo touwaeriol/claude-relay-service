@@ -313,8 +313,22 @@ const authenticateApiKey = async (req, res, next) => {
               maxConcurrency: concurrencyConfig.maxConcurrency
             })
           } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
+            if (error.timeoutType === 'execution') {
+              logger.warn(
+                `⏱️ Concurrency execution timeout for key: ${validation.keyData.id} (${validation.keyData.name}), exceeded: ${error.timeout || 'configured'}s`
+              )
+              return res.status(504).json({
+                error: 'Request execution timeout',
+                message: error.timeout
+                  ? `Request exceeded concurrency execution timeout of ${error.timeout}s`
+                  : 'Request exceeded concurrency execution timeout',
+                timeout: error.timeout,
+                maxConcurrency: concurrencyConfig.maxConcurrency
+              })
+            }
+
             logger.warn(
-              `⏱️ Concurrency timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
+              `⏱️ Concurrency queue timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
             )
             return res.status(503).json({
               error: 'Request timeout',

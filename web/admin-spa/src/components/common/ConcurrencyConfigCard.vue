@@ -21,7 +21,7 @@
           v-if="modelValue.enabled"
           class="mt-3 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
         >
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <!-- 最大并发数 -->
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -43,16 +43,14 @@
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
                 队列长度
-                <span
-                  class="ml-1 text-yellow-600 dark:text-yellow-400"
-                  title="请勿设置过大队列"
-                  >⚠️</span
-                >
+                <span class="ml-1 text-yellow-600 dark:text-yellow-400" title="请勿设置过大队列">
+                  ⚠️
+                </span>
               </label>
               <input
                 class="form-input w-full rounded-lg border-gray-300 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
-                min="0"
                 max="500"
+                min="0"
                 :placeholder="placeholders.queueSize || '推荐 10-50'"
                 type="number"
                 :value="modelValue.queueSize"
@@ -79,6 +77,24 @@
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 队列等待超时时间，超时返回 503
+              </p>
+            </div>
+
+            <!-- 执行超时 -->
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                执行超时(秒)
+              </label>
+              <input
+                class="form-input w-full rounded-lg border-gray-300 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                min="0"
+                :placeholder="placeholders.executionTimeout || '默认300，0 表示不限制'"
+                type="number"
+                :value="modelValue.executionTimeout"
+                @input="handleInput('executionTimeout', $event)"
+              />
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                限制实际请求执行时间，超出后返回 504；设置为 0 表示不限制
               </p>
             </div>
           </div>
@@ -128,6 +144,7 @@ const props = defineProps({
       maxConcurrency: 10,
       queueSize: 20,
       queueTimeout: 120,
+      executionTimeout: 300,
       targetServices: []
     })
   },
@@ -148,7 +165,8 @@ const props = defineProps({
     default: () => ({
       maxConcurrency: '默认10',
       queueSize: '默认20',
-      queueTimeout: '默认120'
+      queueTimeout: '默认120',
+      executionTimeout: '默认300，0 表示不限制'
     })
   }
 })

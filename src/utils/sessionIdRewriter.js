@@ -1,9 +1,9 @@
 const { v5: uuidv5 } = require('uuid')
 const logger = require('./logger')
 
-const USER_ID_REGEX = /^(user_[a-f0-9]{64}_account__session_)([a-f0-9-]{36})$/
+const USER_ID_REGEX = /^(user_[a-f0-9]{64}_account__session_)(.+)$/i
 const UUID_FIELDS = ['session_id', 'sessionId', 'conversation_id', 'conversationId']
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const ACCOUNT_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function isRewriteEnabled(account) {
   if (!account) {
@@ -22,7 +22,7 @@ function rewriteUuid(value, accountId) {
     return null
   }
 
-  if (!accountId || typeof accountId !== 'string' || !UUID_PATTERN.test(accountId)) {
+  if (!accountId || typeof accountId !== 'string' || !ACCOUNT_UUID_PATTERN.test(accountId)) {
     throw new Error(`Account ${accountId || 'unknown'} must be a valid UUID for session rewrite`)
   }
 

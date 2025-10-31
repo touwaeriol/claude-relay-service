@@ -5,6 +5,8 @@ const appConfig = require('../../config/config')
 const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 const redisConnectionManager = require('../utils/redisConnectionManager')
 
+const DEFAULT_EXECUTION_TIMEOUT_SECONDS = 300
+
 /**
  * 并发控制管理器（基于 Bottleneck + node-cache）
  *
@@ -84,6 +86,7 @@ class ConcurrencyManager {
       totalReleased: 0,
       totalQueueFull: 0,
       totalTimeout: 0,
+      totalExecutionTimeout: 0,
       totalConfigUpdates: 0,
       skipsDueToUnchanged: 0, // 配置未变化而跳过更新
       skipsDueToLockWait: 0 // 等待锁后发现已更新而跳过
@@ -97,8 +100,16 @@ class ConcurrencyManager {
       maxConcurrency: 10,
       queueSize: 20,
       queueTimeout: 120,
+      executionTimeout:
+        typeof configDefaults.executionTimeout === 'number'
+          ? configDefaults.executionTimeout
+          : DEFAULT_EXECUTION_TIMEOUT_SECONDS,
       targetServices: [],
       ...configDefaults
+    }
+
+    if (defaults.executionTimeout === undefined || defaults.executionTimeout === null) {
+      defaults.executionTimeout = DEFAULT_EXECUTION_TIMEOUT_SECONDS
     }
 
     if (typeof config === 'string') {
@@ -150,6 +161,11 @@ class ConcurrencyManager {
 
     const coercedQueueTimeout = Math.floor(toNumber(config.queueTimeout, defaults.queueTimeout))
     normalized.queueTimeout = coercedQueueTimeout < 1 ? 1 : coercedQueueTimeout
+
+    const coercedExecutionTimeout = Math.floor(
+      toNumber(config.executionTimeout, defaults.executionTimeout)
+    )
+    normalized.executionTimeout = coercedExecutionTimeout <= 0 ? null : coercedExecutionTimeout
 
     // 处理 targetServices 字段
     const validServices = ['claude', 'gemini', 'openai', 'droid']
@@ -225,7 +241,7 @@ class ConcurrencyManager {
       this.stats.totalCreated++
 
       logger.info(
-        `🆕 Created Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}, ttl=30m`
+        `🆕 Created Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}, executionTimeout=${normalizedExecutionTimeout ?? 'disabled'}s, ttl=30m`
       )
     } else {
       // 🔄 动态更新配置（异步、带锁）
@@ -244,8 +260,15 @@ class ConcurrencyManager {
    * @returns {Bottleneck} Bottleneck 实例
    */
   _createLimiter(resourceId, config) {
-    const { maxConcurrency, queueSize } = config
+    const { maxConcurrency, queueSize, executionTimeout } = config
     const redisConnection = this._getRedisConnection()
+
+    const normalizedExecutionTimeout =
+      typeof executionTimeout === 'number' && executionTimeout > 0
+        ? executionTimeout
+        : null
+    const executionTimeoutMs =
+      normalizedExecutionTimeout !== null ? normalizedExecutionTimeout * 1000 : null
 
     // 统一使用 OVERFLOW 策略（queueSize >= 0）
     const options = {
@@ -255,14 +278,14 @@ class ConcurrencyManager {
       maxConcurrent: maxConcurrency,
       highWater: queueSize, // 直接使用 queueSize (>= 0)
       strategy: Bottleneck.strategy.OVERFLOW, // 统一策略
-      // 租约超时（防止死锁）
-      timeout: 300000 // 5 分钟
+      timeout: executionTimeoutMs ?? undefined
     }
 
     const limiter = new Bottleneck(options)
     this.limiterSettings.set(resourceId, {
       maxConcurrent: maxConcurrency,
-      queueSize
+      queueSize,
+      executionTimeout: normalizedExecutionTimeout
     })
     return limiter
   }
@@ -278,15 +301,22 @@ class ConcurrencyManager {
    * @returns {Promise<void>}
    */
   async _updateLimiterConfig(limiter, resourceId, config) {
-    const { maxConcurrency, queueSize } = config
+    const { maxConcurrency, queueSize, executionTimeout } = config
+    const normalizedExecutionTimeout =
+      typeof executionTimeout === 'number' && executionTimeout > 0
+        ? executionTimeout
+        : null
 
     // 🔍 第一次检查（无锁 - 快速路径）
     const currentSettings = this.limiterSettings.get(resourceId) || {
       maxConcurrent: null,
-      queueSize: null
+      queueSize: null,
+      executionTimeout: null
     }
     const needUpdate =
-      currentSettings.maxConcurrent !== maxConcurrency || currentSettings.queueSize !== queueSize
+      currentSettings.maxConcurrent !== maxConcurrency ||
+      currentSettings.queueSize !== queueSize ||
+      currentSettings.executionTimeout !== normalizedExecutionTimeout
 
     if (!needUpdate) {
       this.stats.skipsDueToUnchanged++
@@ -316,21 +346,27 @@ class ConcurrencyManager {
       // 🔍 第二次检查（有锁 - 确认状态未变）
       const latestSettings = this.limiterSettings.get(resourceId) || {
         maxConcurrent: null,
-        queueSize: null
+        queueSize: null,
+        executionTimeout: null
       }
       const stillNeedUpdate =
-        latestSettings.maxConcurrent !== maxConcurrency || latestSettings.queueSize !== queueSize
+        latestSettings.maxConcurrent !== maxConcurrency ||
+        latestSettings.queueSize !== queueSize ||
+        latestSettings.executionTimeout !== normalizedExecutionTimeout
 
       if (stillNeedUpdate) {
         // ✅ 直接更新配置（不需要重建，因为 queueSize >= 0 统一使用 OVERFLOW 策略）
         limiter.updateSettings({
           maxConcurrent: maxConcurrency,
-          highWater: queueSize
+          highWater: queueSize,
+          timeout:
+            normalizedExecutionTimeout !== null ? normalizedExecutionTimeout * 1000 : null
         })
 
         this.limiterSettings.set(resourceId, {
           maxConcurrent: maxConcurrency,
-          queueSize
+          queueSize,
+          executionTimeout: normalizedExecutionTimeout
         })
 
         this.stats.totalConfigUpdates++
@@ -338,7 +374,10 @@ class ConcurrencyManager {
         logger.info(
           `🔄 Updated Bottleneck for ${resourceId}: ` +
             `maxConcurrency=${latestSettings.maxConcurrent}->${maxConcurrency}, ` +
-            `queueSize=${latestSettings.queueSize}->${queueSize}`
+            `queueSize=${latestSettings.queueSize}->${queueSize}, ` +
+            `executionTimeout=${
+              latestSettings.executionTimeout ?? 'disabled'
+            }->${normalizedExecutionTimeout ?? 'disabled'}`
         )
       } else {
         this.stats.skipsDueToUnchanged++
@@ -406,8 +445,11 @@ class ConcurrencyManager {
       acquireReject(error)
     }
 
+    let jobStarted = false
+
     const job = () =>
       new Promise((resolveJob) => {
+        jobStarted = true
         cleanupEarlyListeners()
 
         if (earlyDisconnected) {
@@ -499,7 +541,7 @@ class ConcurrencyManager {
       }
 
       try {
-        await this._handleAcquireError(error, resourceId, config, limiter)
+        await this._handleAcquireError(error, resourceId, config, limiter, jobStarted)
       } catch (handledError) {
         rejectAcquireOnce(handledError)
         return
@@ -520,9 +562,11 @@ class ConcurrencyManager {
    * @param {Bottleneck} limiter - Bottleneck 实例
    * @throws {Error} 格式化后的错误
    */
-  async _handleAcquireError(error, resourceId, config, limiter) {
-    // 🚫 队列满
-    if (error.message.includes('This job has been dropped by Bottleneck')) {
+  async _handleAcquireError(error, resourceId, config, limiter, jobStarted = false) {
+    const isBottleneckError = error instanceof Bottleneck.BottleneckError
+    const message = typeof error.message === 'string' ? error.message : ''
+
+    if (isBottleneckError && message === 'This job has been dropped by Bottleneck') {
       const counts = await limiter.counts()
       this.stats.totalQueueFull++
 
@@ -540,8 +584,7 @@ class ConcurrencyManager {
       throw queueFullError
     }
 
-    // ⏱️ 超时
-    if (error.message.includes('timeout') || error.message.includes('expiration')) {
+    if (!jobStarted && isBottleneckError && message === 'This job reached its expiration time.') {
       this.stats.totalTimeout++
 
       logger.warn(`⏱️ Timeout waiting for slot: ${resourceId} (waited ${config.queueTimeout}s)`)
@@ -551,7 +594,30 @@ class ConcurrencyManager {
       timeoutError.resourceId = resourceId
       timeoutError.timeout = config.queueTimeout
       timeoutError.timeoutMs = config.queueTimeout * 1000
+      timeoutError.timeoutType = 'queue'
       throw timeoutError
+    }
+
+    if (jobStarted && isBottleneckError && message === 'This job has timed out.') {
+      this.stats.totalExecutionTimeout++
+
+      const executionTimeout = config.executionTimeout || 0
+      logger.warn(
+        `⏱️ Execution timeout for ${resourceId}: exceeded ${executionTimeout || 'configured'}s`
+      )
+
+      const executionTimeoutError = new Error(
+        executionTimeout
+          ? `Concurrency execution timeout after ${executionTimeout}s`
+          : 'Concurrency execution timeout'
+      )
+      executionTimeoutError.code = CONCURRENCY_ERRORS.TIMEOUT
+      executionTimeoutError.resourceId = resourceId
+      executionTimeoutError.timeout = executionTimeout
+      executionTimeoutError.timeoutMs =
+        executionTimeout && executionTimeout > 0 ? executionTimeout * 1000 : null
+      executionTimeoutError.timeoutType = 'execution'
+      throw executionTimeoutError
     }
 
     // 其他错误

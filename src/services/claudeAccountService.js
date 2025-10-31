@@ -582,12 +582,7 @@ class ClaudeAccountService {
           const authType = isOAuth ? 'oauth' : 'setup-token'
           const parsedExtInfo = this._safeParseJson(account.extInfo)
 
-          const defaultConcurrencyConfig = {
-            enabled: false,
-            maxConcurrency: 10,
-            queueSize: 20,
-            queueTimeout: 120
-          }
+          const defaultConcurrencyConfig = concurrencyManager.normalizeConfig({})
           const defaultSessionConfig = {
             enabled: false,
             maxSessions: 10,
@@ -596,14 +591,9 @@ class ClaudeAccountService {
 
           let parsedConcurrencyControl = defaultConcurrencyConfig
           if (account.concurrencyControl) {
-            try {
-              parsedConcurrencyControl = JSON.parse(account.concurrencyControl)
-            } catch (error) {
-              logger.warn(
-                `⚠️ Failed to parse concurrencyControl for Claude account ${account.id}: ${error.message}`
-              )
-              parsedConcurrencyControl = defaultConcurrencyConfig
-            }
+            parsedConcurrencyControl = concurrencyManager.normalizeConfig(
+              account.concurrencyControl
+            )
           }
 
           let parsedSessionConcurrencyConfig = defaultSessionConfig

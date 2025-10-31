@@ -957,6 +957,7 @@ const buildConcurrencyPayload = () => ({
   maxConcurrency: form.concurrencyConfig.maxConcurrency,
   queueSize: form.concurrencyConfig.queueSize,
   queueTimeout: form.concurrencyConfig.queueTimeout,
+  executionTimeout: form.concurrencyConfig.executionTimeout,
   targetServices: sanitizeTargetServices(form.concurrencyConfig.targetServices)
 })
 
@@ -997,6 +998,7 @@ const form = reactive({
     maxConcurrency: 10,
     queueSize: 20,
     queueTimeout: 120,
+    executionTimeout: 300,
     targetServices: []
   },
   sessionConcurrencyConfig: {

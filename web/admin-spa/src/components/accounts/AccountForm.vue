@@ -3675,6 +3675,10 @@ const form = ref({
     1,
     extractConcurrencyValue(props.account?.concurrencyControl, 'queueTimeout', 120)
   ),
+  executionTimeout: Math.max(
+    0,
+    extractConcurrencyValue(props.account?.concurrencyControl, 'executionTimeout', 300)
+  ),
   // 会话并发控制字段
   enableSessionConcurrencyControl: extractConcurrencyEnabled(
     props.account?.sessionConcurrencyConfig
@@ -3725,13 +3729,15 @@ const concurrencyConfig = computed({
     enabled: form.value.enableConcurrencyControl,
     maxConcurrency: form.value.maxConcurrency,
     queueSize: form.value.queueSize,
-    queueTimeout: form.value.queueTimeout
+    queueTimeout: form.value.queueTimeout,
+    executionTimeout: form.value.executionTimeout
   }),
   set: (value) => {
     form.value.enableConcurrencyControl = value.enabled
     form.value.maxConcurrency = value.maxConcurrency
     form.value.queueSize = value.queueSize
     form.value.queueTimeout = value.queueTimeout
+    form.value.executionTimeout = value.executionTimeout
   }
 })
 
@@ -4238,7 +4244,8 @@ const handleOAuthSuccess = async (tokenInfo) => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120)),
+        executionTimeout: Math.max(0, coerceNumberOrDefault(form.value.executionTimeout, 300))
       }
       // 添加会话并发控制配置
       data.sessionConcurrencyConfig = {
@@ -4556,7 +4563,8 @@ const createAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120)),
+        executionTimeout: Math.max(0, coerceNumberOrDefault(form.value.executionTimeout, 300))
       }
       // 添加会话并发控制配置
       data.sessionConcurrencyConfig = {
@@ -4653,7 +4661,8 @@ const createAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120)),
+        executionTimeout: Math.max(0, coerceNumberOrDefault(form.value.executionTimeout, 300))
       }
       // 添加会话并发控制配置
       data.sessionConcurrencyConfig = {
@@ -4943,7 +4952,8 @@ const updateAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120)),
+        executionTimeout: Math.max(0, coerceNumberOrDefault(form.value.executionTimeout, 300))
       }
       // 会话并发控制配置
       data.sessionConcurrencyConfig = {
@@ -4982,7 +4992,8 @@ const updateAccount = async () => {
         enabled: !!form.value.enableConcurrencyControl,
         maxConcurrency: coerceNumberOrDefault(form.value.maxConcurrency, 10),
         queueSize: coerceNumberOrDefault(form.value.queueSize, 20),
-        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120))
+        queueTimeout: Math.max(1, coerceNumberOrDefault(form.value.queueTimeout, 120)),
+        executionTimeout: Math.max(0, coerceNumberOrDefault(form.value.executionTimeout, 300))
       }
       // 会话并发控制配置
       data.sessionConcurrencyConfig = {
@@ -5580,6 +5591,10 @@ watch(
         queueTimeout: Math.max(
           1,
           extractConcurrencyValue(newAccount.concurrencyControl, 'queueTimeout', 120)
+        ),
+        executionTimeout: Math.max(
+          0,
+          extractConcurrencyValue(newAccount.concurrencyControl, 'executionTimeout', 300)
         ),
         // 会话并发控制相关字段
         enableSessionConcurrencyControl: extractConcurrencyEnabled(

@@ -206,7 +206,6 @@ describe('sessionIdRewriter', () => {
       const invalidUserIds = [
         'invalid_format',
         'user_short_account__session_abc',
-        `user_${'a'.repeat(64)}_account__session_not-a-uuid`,
         `user_${'a'.repeat(63)}_account__session_${originalSessionId}`, // 少一位
         `user_${'a'.repeat(65)}_account__session_${originalSessionId}` // 多一位
       ]
@@ -226,6 +225,36 @@ describe('sessionIdRewriter', () => {
 
         expect(JSON.stringify(body)).toBe(originalBody)
       })
+    })
+
+    test('非 UUID 的 session 值仍会生成新 UUID', () => {
+      const customSessionId = 'custom-session-token-001'
+      const nonUuidUserId = `user_${'a'.repeat(64)}_account__session_${customSessionId}`
+      const body = {
+        metadata: { user_id: nonUuidUserId },
+        session_id: customSessionId,
+        sessionId: customSessionId,
+        conversation_id: customSessionId,
+        conversationId: customSessionId
+      }
+      const account = {
+        id: validAccountId,
+        platform: 'claude',
+        rewriteSessionId: true
+      }
+
+      rewriteSessionId(body, { account })
+
+      const match = body.metadata.user_id.match(
+        /user_[a-f0-9]{64}_account__session_([a-f0-9-]{36})$/
+      )
+      expect(match).not.toBeNull()
+      const rewrittenSessionId = match[1]
+
+      expect(body.session_id).toBe(rewrittenSessionId)
+      expect(body.sessionId).toBe(rewrittenSessionId)
+      expect(body.conversation_id).toBe(rewrittenSessionId)
+      expect(body.conversationId).toBe(rewrittenSessionId)
     })
   })
 

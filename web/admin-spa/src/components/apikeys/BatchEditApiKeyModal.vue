@@ -583,6 +583,7 @@ const form = reactive({
     maxConcurrency: 10,
     queueSize: 20,
     queueTimeout: 120,
+    executionTimeout: 300,
     targetServices: []
   },
   applySessionConcurrencyConfig: false,
@@ -790,6 +791,7 @@ const batchUpdateApiKeys = async () => {
       const maxConcurrency = Number(form.concurrencyConfig.maxConcurrency)
       const queueSize = Number(form.concurrencyConfig.queueSize)
       const queueTimeout = Number(form.concurrencyConfig.queueTimeout)
+      const executionTimeout = Number(form.concurrencyConfig.executionTimeout)
 
       updates.concurrencyConfig = {
         enabled: !!form.concurrencyConfig.enabled,
@@ -798,6 +800,10 @@ const batchUpdateApiKeys = async () => {
         queueSize: Number.isFinite(queueSize) && queueSize >= 0 ? Math.floor(queueSize) : 20,
         queueTimeout:
           Number.isFinite(queueTimeout) && queueTimeout > 0 ? Math.floor(queueTimeout) : 120,
+        executionTimeout:
+          Number.isFinite(executionTimeout) && executionTimeout >= 0
+            ? Math.floor(executionTimeout)
+            : 300,
         targetServices: sanitizeTargetServices(form.concurrencyConfig.targetServices)
       }
     }

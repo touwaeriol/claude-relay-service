@@ -243,12 +243,7 @@ class ClaudeConsoleAccountService {
           // 获取限流状态信息
           const rateLimitInfo = this._getRateLimitInfo(accountData)
 
-          const defaultConcurrencyConfig = {
-            enabled: false,
-            maxConcurrency: 10,
-            queueSize: 20,
-            queueTimeout: 120
-          }
+          const defaultConcurrencyConfig = concurrencyManager.normalizeConfig({})
           const defaultSessionConfig = {
             enabled: false,
             maxSessions: 10,
@@ -257,14 +252,9 @@ class ClaudeConsoleAccountService {
 
           let parsedConcurrencyControl = defaultConcurrencyConfig
           if (accountData.concurrencyControl) {
-            try {
-              parsedConcurrencyControl = JSON.parse(accountData.concurrencyControl)
-            } catch (error) {
-              logger.warn(
-                `⚠️ Failed to parse concurrencyControl for Claude Console account ${accountData.id}: ${error.message}`
-              )
-              parsedConcurrencyControl = defaultConcurrencyConfig
-            }
+            parsedConcurrencyControl = concurrencyManager.normalizeConfig(
+              accountData.concurrencyControl
+            )
           }
 
           let parsedSessionConcurrencyConfig = defaultSessionConfig
