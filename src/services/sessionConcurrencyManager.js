@@ -3,8 +3,10 @@ const { LRUCache } = require('lru-cache')
 const logger = require('../utils/logger')
 const appConfig = require('../../config/config')
 const {
-  normalizeConfig: normalizeSessionConcurrencyConfig
+  normalizeConfig: normalizeSessionConcurrencyConfig,
+  getConfigHash
 } = require('../utils/sessionConcurrencyConfigHelper')
+const { SESSION_CONCURRENCY_ERRORS, REDIS_ERRORS } = require('../constants/errorCodes')
 
 /**
  * 会话并发控制管理器
@@ -50,6 +52,11 @@ const {
  * TTL: windowSeconds（自动过期）
  * ```
  */
+
+// 常量
+const LRU_CACHE_MAX_ACCOUNTS = 10000
+const LRU_CACHE_TTL_MS = 30 * 60 * 1000 // 30 分钟
+
 class SessionConcurrencyManager {
   constructor() {
     /**
@@ -59,12 +66,12 @@ class SessionConcurrencyManager {
 
     /**
      * 配置缓存（用于配置变更检测）
-     * 存储每个账户的上次使用配置
+     * 存储每个账户的上次使用配置哈希
      * 类似 concurrencyManager 的 limiters 缓存 Bottleneck 实例配置
      */
     this.accountConfigs = new LRUCache({
-      max: 10000, // 最多缓存 10000 个账户
-      ttl: 30 * 60 * 1000, // 30 分钟过期
+      max: LRU_CACHE_MAX_ACCOUNTS,
+      ttl: LRU_CACHE_TTL_MS,
       updateAgeOnGet: true // 访问时刷新 TTL
     })
   }
@@ -123,6 +130,8 @@ class SessionConcurrencyManager {
    *   [1, 'existing'] - 会话已存在，已更新时间戳
    *   [1, 'added', currentCount] - 成功添加新会话，返回当前会话数
    *   [0, currentCount] - 达到上限，拒绝添加
+   *
+   * 注意：脚本中会对 redisKey 刷新 TTL（ARGV[5]）
    */
   _getCheckAndAddLuaScript() {
     return `
@@ -131,12 +140,14 @@ class SessionConcurrencyManager {
       local cutoffTime = tonumber(ARGV[2])
       local maxSessions = tonumber(ARGV[3])
       local sessionHash = ARGV[4]
+      local windowSeconds = tonumber(ARGV[5])
 
       -- 检查是否已存在
       local existingScore = redis.call('ZSCORE', redisKey, sessionHash)
       if existingScore then
-        -- 会话已存在，更新时间戳
+        -- 会话已存在，更新时间戳和 TTL
         redis.call('ZADD', redisKey, now, sessionHash)
+        redis.call('EXPIRE', redisKey, windowSeconds)
         return {1, 'existing'}
       end
 
@@ -148,11 +159,14 @@ class SessionConcurrencyManager {
 
       -- 检查是否达到上限
       if currentCount >= maxSessions then
+        -- 即使达到上限，也刷新 TTL 以保持时间窗口准确性
+        redis.call('EXPIRE', redisKey, windowSeconds)
         return {0, currentCount}
       end
 
-      -- 添加新会话
+      -- 添加新会话并刷新 TTL
       redis.call('ZADD', redisKey, now, sessionHash)
+      redis.call('EXPIRE', redisKey, windowSeconds)
       return {1, 'added', currentCount + 1}
     `
   }
@@ -175,7 +189,7 @@ class SessionConcurrencyManager {
     // 验证参数
     if (!accountId || typeof accountId !== 'string') {
       const error = new Error('accountId must be a non-empty string')
-      error.code = 'INVALID_ACCOUNT_ID'
+      error.code = SESSION_CONCURRENCY_ERRORS.INVALID_ACCOUNT_ID
       return { allowed: false, error }
     }
 
@@ -199,19 +213,31 @@ class SessionConcurrencyManager {
     const cutoffTime = now - windowSeconds * 1000
 
     try {
-      // 🔒 使用 Lua 脚本执行原子操作：检查+清理+统计+添加
+      // 🔒 使用 Lua 脚本执行原子操作：检查+清理+统计+添加+刷新TTL
       const luaScript = this._getCheckAndAddLuaScript()
-      const result = await redis.eval(luaScript, 1, redisKey, now, cutoffTime, maxSessions, sessionHash)
+      const result = await redis.eval(
+        luaScript,
+        1,
+        redisKey,
+        now,
+        cutoffTime,
+        maxSessions,
+        sessionHash,
+        windowSeconds
+      )
 
       const [success, action, currentCount] = result
 
-      // 🔍 检查配置是否变化，更新 TTL
-      const cached = this.accountConfigs.get(accountId)
-      if (!cached || cached.windowSeconds !== windowSeconds) {
+      // 🔍 检查配置是否变化（使用完整哈希）
+      const configHash = getConfigHash(normalizedConfig)
+      const cachedHash = this.accountConfigs.get(accountId)
+
+      if (cachedHash !== configHash) {
+        // 配置变化，刷新 TTL 并更新缓存
         await redis.expire(redisKey, windowSeconds)
-        this.accountConfigs.set(accountId, { windowSeconds })
+        this.accountConfigs.set(accountId, configHash)
         logger.debug(
-          `🔄 [SessionConcurrency] Config updated for ${accountId}: windowSeconds=${windowSeconds}`
+          `🔄 [SessionConcurrency] Config updated for ${accountId}: hash=${configHash.substring(0, 16)}...`
         )
       }
 
@@ -247,7 +273,7 @@ class SessionConcurrencyManager {
       const error = new Error(
         `Session concurrency limit exceeded: ${currentCount} active sessions, maximum is ${maxSessions} within ${windowSeconds}s window`
       )
-      error.code = 'SESSION_LIMIT_EXCEEDED'
+      error.code = SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED
       error.accountId = accountId
       error.currentSessions = currentCount
       error.maxSessions = maxSessions
@@ -270,8 +296,13 @@ class SessionConcurrencyManager {
     } catch (error) {
       logger.error(`❌ [SessionConcurrency] Redis error for ${accountId}:`, error)
 
-      // Redis 错误时允许请求（降级策略）
-      return { allowed: true }
+      // 🔴 Redis 故障时直接抛出异常，阻止继续提供服务
+      const redisError = new Error('Session concurrency check failed due to Redis error')
+      redisError.code = REDIS_ERRORS.REDIS_ERROR
+      redisError.accountId = accountId
+      redisError.originalError = error
+
+      throw redisError
     }
   }
 

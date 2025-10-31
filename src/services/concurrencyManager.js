@@ -3,6 +3,7 @@ const { LRUCache } = require('lru-cache')
 const IORedis = require('ioredis')
 const logger = require('../utils/logger')
 const appConfig = require('../../config/config')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 
 /**
  * 并发控制管理器（基于 Bottleneck + node-cache）
@@ -89,7 +90,8 @@ class ConcurrencyManager {
       totalQueueFull: 0,
       totalTimeout: 0,
       totalConfigUpdates: 0,
-      totalConfigUpdateSkips: 0
+      skipsDueToUnchanged: 0, // 配置未变化而跳过更新
+      skipsDueToLockWait: 0 // 等待锁后发现已更新而跳过
     }
   }
 
@@ -328,7 +330,7 @@ class ConcurrencyManager {
       currentSettings.maxConcurrent !== maxConcurrency || currentSettings.queueSize !== queueSize
 
     if (!needUpdate) {
-      this.stats.totalConfigUpdateSkips++
+      this.stats.skipsDueToUnchanged++
       return limiter // 配置未变，无需更新
     }
 
@@ -339,7 +341,7 @@ class ConcurrencyManager {
       // 有正在进行的更新，等待它完成
       logger.debug(`⏳ Waiting for config update lock: ${resourceId}`)
       await existingLock
-      this.stats.totalConfigUpdateSkips++
+      this.stats.skipsDueToLockWait++
       return this.limiters.get(resourceId) || limiter // 更新已由其他调用完成
     }
 
@@ -358,8 +360,7 @@ class ConcurrencyManager {
         queueSize: null
       }
       const stillNeedUpdate =
-        latestSettings.maxConcurrent !== maxConcurrency ||
-        latestSettings.queueSize !== queueSize
+        latestSettings.maxConcurrent !== maxConcurrency || latestSettings.queueSize !== queueSize
 
       if (stillNeedUpdate) {
         const wasUnlimited = (latestSettings.queueSize ?? -1) < 0
@@ -396,7 +397,7 @@ class ConcurrencyManager {
           )
         }
       } else {
-        this.stats.totalConfigUpdateSkips++
+        this.stats.skipsDueToUnchanged++
         logger.debug(`⏭️ Config already updated by concurrent call: ${resourceId}`)
       }
     } finally {
@@ -466,7 +467,9 @@ class ConcurrencyManager {
         cleanupEarlyListeners()
 
         if (earlyDisconnected) {
-          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          const disconnectError = new Error('Client disconnected before acquiring slot')
+          disconnectError.code = CONCURRENCY_ERRORS.CLIENT_DISCONNECTED
+          disconnectError.resourceId = resourceId
           logger.info(`🔌 Client disconnected before acquiring slot: ${resourceId}`)
           resolveJob()
           rejectAcquireOnce(disconnectError)
@@ -497,7 +500,9 @@ class ConcurrencyManager {
             return
           }
           finalizeRelease()
-          const disconnectError = this._buildClientDisconnectedError(resourceId)
+          const disconnectError = new Error('Client disconnected while holding slot')
+          disconnectError.code = CONCURRENCY_ERRORS.CLIENT_DISCONNECTED
+          disconnectError.resourceId = resourceId
           logger.info(`🔌 Client disconnected while holding slot: ${resourceId}`)
           this.stats.totalReleased++
           rejectAcquireOnce(disconnectError)
@@ -584,7 +589,7 @@ class ConcurrencyManager {
       const queueFullError = new Error(
         `Queue full: ${counts.QUEUED} requests waiting, maximum queue size is ${config.queueSize}`
       )
-      queueFullError.code = 'QUEUE_FULL'
+      queueFullError.code = CONCURRENCY_ERRORS.QUEUE_FULL
       queueFullError.resourceId = resourceId
       queueFullError.currentWaiting = counts.QUEUED
       queueFullError.maxQueueSize = config.queueSize
@@ -598,7 +603,7 @@ class ConcurrencyManager {
       logger.warn(`⏱️ Timeout waiting for slot: ${resourceId} (waited ${config.queueTimeout}s)`)
 
       const timeoutError = new Error(`Concurrency timeout after ${config.queueTimeout}s`)
-      timeoutError.code = 'TIMEOUT'
+      timeoutError.code = CONCURRENCY_ERRORS.TIMEOUT
       timeoutError.resourceId = resourceId
       timeoutError.timeout = config.queueTimeout
       timeoutError.timeoutMs = config.queueTimeout * 1000
@@ -607,13 +612,6 @@ class ConcurrencyManager {
 
     // 其他错误
     throw error
-  }
-
-  _buildClientDisconnectedError(resourceId) {
-    const err = new Error('Client disconnected while waiting for concurrency slot')
-    err.code = 'CLIENT_DISCONNECTED'
-    err.resourceId = resourceId
-    return err
   }
 
   /**
@@ -688,7 +686,7 @@ class ConcurrencyManager {
     return {
       ...this.stats,
       totalLimiters: this.limiters.size,
-      ttl: '30 minutes'
+      ttl: `${Math.floor(this.limiterTtlMs / 60000)} minutes`
     }
   }
 

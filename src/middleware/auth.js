@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid')
+// const { v4: uuidv4 } = require('uuid') // 暂时未使用
 const config = require('../../config/config')
 const apiKeyService = require('../services/apiKeyService')
 const userService = require('../services/userService')
@@ -7,6 +7,7 @@ const redis = require('../models/redis')
 // const { RateLimiterRedis } = require('rate-limiter-flexible') // 暂时未使用
 const ClientValidator = require('../validators/clientValidator')
 const concurrencyManager = require('../services/concurrencyManager')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 
 const FALLBACK_CONCURRENCY_CONFIG = {
   leaseSeconds: 300,
@@ -49,7 +50,11 @@ function detectServiceType(req) {
     if (lowerModel.startsWith('gemini-') || lowerModel.includes('gemini')) {
       return 'gemini'
     }
-    if (lowerModel.startsWith('gpt-') || lowerModel.startsWith('o1-') || lowerModel.includes('openai')) {
+    if (
+      lowerModel.startsWith('gpt-') ||
+      lowerModel.startsWith('o1-') ||
+      lowerModel.includes('openai')
+    ) {
       return 'openai'
     }
     if (lowerModel.startsWith('claude-') || lowerModel.includes('claude')) {
@@ -64,7 +69,7 @@ function detectServiceType(req) {
   return 'claude'
 }
 
-const resolveConcurrencyConfig = () => {
+const _resolveConcurrencyConfig = () => {
   if (typeof redis._getConcurrencyConfig === 'function') {
     return redis._getConcurrencyConfig()
   }
@@ -296,7 +301,7 @@ const authenticateApiKey = async (req, res, next) => {
           )
         } catch (error) {
           // 处理并发控制错误
-          if (error.code === 'QUEUE_FULL') {
+          if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
             logger.security(
               `🚫 Queue full for key: ${validation.keyData.id} (${validation.keyData.name}), waiting: ${error.currentWaiting}, max: ${error.maxQueueSize}`
             )
@@ -307,7 +312,7 @@ const authenticateApiKey = async (req, res, next) => {
               maxQueueSize: error.maxQueueSize,
               maxConcurrency: concurrencyConfig.maxConcurrency
             })
-          } else if (error.code === 'TIMEOUT') {
+          } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
             logger.warn(
               `⏱️ Concurrency timeout for key: ${validation.keyData.id} (${validation.keyData.name}), waited: ${error.timeout}s`
             )
@@ -318,7 +323,7 @@ const authenticateApiKey = async (req, res, next) => {
               maxConcurrency: concurrencyConfig.maxConcurrency,
               queueSize: concurrencyConfig.queueSize
             })
-          } else if (error.code === 'CLIENT_DISCONNECTED') {
+          } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
             logger.info(
               `🔌 Client disconnected for key: ${validation.keyData.id} (${validation.keyData.name})`
             )

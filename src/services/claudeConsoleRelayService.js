@@ -4,6 +4,7 @@ const logger = require('../utils/logger')
 const config = require('../../config/config')
 const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 const {
   checkAccountSessionLimit,
   checkApiKeySessionLimit
@@ -74,7 +75,7 @@ class ClaudeConsoleRelayService {
           )
           logger.debug(`✅ [Console NonStream] Acquired concurrency slot for ${accountId}`)
         } catch (error) {
-          if (error.code === 'QUEUE_FULL') {
+          if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
             logger.warn(
               `🚫 [Console NonStream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
             )
@@ -91,7 +92,7 @@ class ClaudeConsoleRelayService {
               }),
               accountId
             }
-          } else if (error.code === 'TIMEOUT') {
+          } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
             logger.warn(
               `⏱️ [Console NonStream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
             )
@@ -110,7 +111,7 @@ class ClaudeConsoleRelayService {
               }),
               accountId
             }
-          } else if (error.code === 'CLIENT_DISCONNECTED') {
+          } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
             logger.info(
               `🔌 [Console NonStream] Client disconnected while waiting for concurrency slot: ${accountId}`
             )
@@ -459,7 +460,7 @@ class ClaudeConsoleRelayService {
             )
             logger.debug(`✅ [Console Stream] Acquired concurrency slot for ${accountId}`)
           } catch (error) {
-            if (error.code === 'QUEUE_FULL') {
+            if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
               logger.warn(
                 `🚫 [Console Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
               )
@@ -476,7 +477,7 @@ class ClaudeConsoleRelayService {
               )
               responseStream.end()
               return
-            } else if (error.code === 'TIMEOUT') {
+            } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
               logger.warn(
                 `⏱️ [Console Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
               )
@@ -492,7 +493,7 @@ class ClaudeConsoleRelayService {
               )
               responseStream.end()
               return
-            } else if (error.code === 'CLIENT_DISCONNECTED') {
+            } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
               logger.info(
                 `🔌 [Console Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
               )

@@ -344,7 +344,10 @@ async function testSessionExpiration() {
       testConfig
     )
 
-    log(beforeResult.allowed ? 'red' : 'green', `第3个会话: ${beforeResult.allowed ? '❌ 被允许（异常）' : '✅ 被拒绝（正确）'}`)
+    log(
+      beforeResult.allowed ? 'red' : 'green',
+      `第3个会话: ${beforeResult.allowed ? '❌ 被允许（异常）' : '✅ 被拒绝（正确）'}`
+    )
 
     // 等待6秒（超过5秒窗口）
     log('cyan', `\n⏳ 等待6秒让会话过期...`)
@@ -358,7 +361,10 @@ async function testSessionExpiration() {
     )
 
     count = await redis.zcard(redisKey)
-    log(afterResult.allowed ? 'green' : 'red', `6秒后再试: ${afterResult.allowed ? '✅ 被允许（正确）' : '❌ 被拒绝（异常）'}`)
+    log(
+      afterResult.allowed ? 'green' : 'red',
+      `6秒后再试: ${afterResult.allowed ? '✅ 被允许（正确）' : '❌ 被拒绝（异常）'}`
+    )
     log('blue', `当前会话数: ${count}`)
 
     // 验证结果
@@ -409,7 +415,7 @@ async function testTTLRefresh() {
   try {
     // 首次请求
     await sessionConcurrencyManager.checkSessionLimit(accountId, sessionHash, testConfig)
-    let ttl1 = await redis.ttl(redisKey)
+    const ttl1 = await redis.ttl(redisKey)
     log('yellow', `\n首次请求后 TTL: ${ttl1}秒 (应该≈${testConfig.windowSeconds}秒)`)
 
     // 等待3秒
@@ -417,23 +423,35 @@ async function testTTLRefresh() {
     await sleep(3000)
 
     // 检查TTL降低
-    let ttl2 = await redis.ttl(redisKey)
+    const ttl2 = await redis.ttl(redisKey)
     log('blue', `3秒后 TTL: ${ttl2}秒 (应该≈${testConfig.windowSeconds - 3}秒)`)
 
     // 再次请求（应该刷新TTL）
     await sessionConcurrencyManager.checkSessionLimit(accountId, sessionHash, testConfig)
-    let ttl3 = await redis.ttl(redisKey)
+    const ttl3 = await redis.ttl(redisKey)
     log('yellow', `\n再次请求后 TTL: ${ttl3}秒 (应该≈${testConfig.windowSeconds}秒)`)
 
     // 验证结果
-    const initialTTLCorrect = ttl1 >= testConfig.windowSeconds - 1 && ttl1 <= testConfig.windowSeconds
-    const decreasedTTLCorrect = ttl2 >= testConfig.windowSeconds - 4 && ttl2 <= testConfig.windowSeconds - 2
-    const refreshedTTLCorrect = ttl3 >= testConfig.windowSeconds - 1 && ttl3 <= testConfig.windowSeconds
+    const initialTTLCorrect =
+      ttl1 >= testConfig.windowSeconds - 1 && ttl1 <= testConfig.windowSeconds
+    const decreasedTTLCorrect =
+      ttl2 >= testConfig.windowSeconds - 4 && ttl2 <= testConfig.windowSeconds - 2
+    const refreshedTTLCorrect =
+      ttl3 >= testConfig.windowSeconds - 1 && ttl3 <= testConfig.windowSeconds
 
     log('yellow', `\n📊 验证结果:`)
-    log(initialTTLCorrect ? 'green' : 'red', `  初始TTL: ${initialTTLCorrect ? '✅' : '❌'} ${ttl1}秒`)
-    log(decreasedTTLCorrect ? 'green' : 'red', `  降低TTL: ${decreasedTTLCorrect ? '✅' : '❌'} ${ttl2}秒`)
-    log(refreshedTTLCorrect ? 'green' : 'red', `  刷新TTL: ${refreshedTTLCorrect ? '✅' : '❌'} ${ttl3}秒`)
+    log(
+      initialTTLCorrect ? 'green' : 'red',
+      `  初始TTL: ${initialTTLCorrect ? '✅' : '❌'} ${ttl1}秒`
+    )
+    log(
+      decreasedTTLCorrect ? 'green' : 'red',
+      `  降低TTL: ${decreasedTTLCorrect ? '✅' : '❌'} ${ttl2}秒`
+    )
+    log(
+      refreshedTTLCorrect ? 'green' : 'red',
+      `  刷新TTL: ${refreshedTTLCorrect ? '✅' : '❌'} ${ttl3}秒`
+    )
 
     const passed = initialTTLCorrect && decreasedTTLCorrect && refreshedTTLCorrect
 
@@ -473,7 +491,10 @@ async function testConfigValidation() {
       actual: result1.allowed,
       passed: result1.allowed === true
     })
-    log(result1.allowed ? 'green' : 'red', `  ${result1.allowed ? '✅' : '❌'} 结果: ${result1.allowed ? '允许（默认禁用）' : '拒绝'}`)
+    log(
+      result1.allowed ? 'green' : 'red',
+      `  ${result1.allowed ? '✅' : '❌'} 结果: ${result1.allowed ? '允许（默认禁用）' : '拒绝'}`
+    )
 
     // 测试6.2: 空对象配置
     log('blue', '\n测试6.2: 空对象配置')
@@ -484,7 +505,10 @@ async function testConfigValidation() {
       actual: result2.allowed,
       passed: result2.allowed === true
     })
-    log(result2.allowed ? 'green' : 'red', `  ${result2.allowed ? '✅' : '❌'} 结果: ${result2.allowed ? '允许（默认禁用）' : '拒绝'}`)
+    log(
+      result2.allowed ? 'green' : 'red',
+      `  ${result2.allowed ? '✅' : '❌'} 结果: ${result2.allowed ? '允许（默认禁用）' : '拒绝'}`
+    )
 
     // 测试6.3: 字符串类型值
     log('blue', '\n测试6.3: 字符串类型值')
@@ -499,7 +523,10 @@ async function testConfigValidation() {
       actual: result3.allowed,
       passed: result3.allowed === true
     })
-    log(result3.allowed ? 'green' : 'red', `  ${result3.allowed ? '✅' : '❌'} 结果: ${result3.allowed ? '允许（字符串转数字）' : '拒绝'}`)
+    log(
+      result3.allowed ? 'green' : 'red',
+      `  ${result3.allowed ? '✅' : '❌'} 结果: ${result3.allowed ? '允许（字符串转数字）' : '拒绝'}`
+    )
 
     // 测试6.4: maxSessions=0
     log('blue', '\n测试6.4: maxSessions=0（应该自动修正为1）')
@@ -514,7 +541,10 @@ async function testConfigValidation() {
       actual: result4.allowed,
       passed: result4.allowed === true
     })
-    log(result4.allowed ? 'green' : 'red', `  ${result4.allowed ? '✅' : '❌'} 结果: ${result4.allowed ? '允许（修正为1）' : '拒绝'}`)
+    log(
+      result4.allowed ? 'green' : 'red',
+      `  ${result4.allowed ? '✅' : '❌'} 结果: ${result4.allowed ? '允许（修正为1）' : '拒绝'}`
+    )
 
     // 测试6.5: windowSeconds=30（低于最小值）
     log('blue', '\n测试6.5: windowSeconds=30（应该自动修正为60）')
@@ -529,7 +559,10 @@ async function testConfigValidation() {
       actual: result5.allowed,
       passed: result5.allowed === true
     })
-    log(result5.allowed ? 'green' : 'red', `  ${result5.allowed ? '✅' : '❌'} 结果: ${result5.allowed ? '允许（修正为60）' : '拒绝'}`)
+    log(
+      result5.allowed ? 'green' : 'red',
+      `  ${result5.allowed ? '✅' : '❌'} 结果: ${result5.allowed ? '允许（修正为60）' : '拒绝'}`
+    )
 
     // 统计结果
     const allPassed = tests.every((t) => t.passed)

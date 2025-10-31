@@ -380,12 +380,7 @@ class ApiKeyService {
           concurrencyLimit: parsedConcurrencyConfig.enabled
             ? parsedConcurrencyConfig.maxConcurrency
             : 0,
-          sessionConcurrencyConfig: normalizeSessionConcurrencyConfig(
-            JSON.parse(
-              keyData.sessionConcurrencyConfig ||
-                JSON.stringify(config.defaults.sessionConcurrency)
-            )
-          ),
+          sessionConcurrencyConfig: parsedSessionConcurrencyConfig,
           rateLimitWindow: parseInt(keyData.rateLimitWindow || 0),
           rateLimitRequests: parseInt(keyData.rateLimitRequests || 0),
           rateLimitCost: parseFloat(keyData.rateLimitCost || 0), // 新增：速率限制费用字段
@@ -487,6 +482,37 @@ class ApiKeyService {
         tags = keyData.tags ? JSON.parse(keyData.tags) : []
       } catch (e) {
         tags = []
+      }
+
+      // 解析并发控制配置（只解析一次，复用结果）
+      let parsedConcurrencyConfig
+      try {
+        const rawConcurrencyConfig = JSON.parse(
+          keyData.concurrencyConfig || JSON.stringify(config.defaults.concurrency)
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(rawConcurrencyConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse concurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedConcurrencyConfig = concurrencyManager.normalizeConfig(config.defaults.concurrency)
+      }
+
+      let parsedSessionConcurrencyConfig
+      try {
+        const rawSessionConfig = JSON.parse(
+          keyData.sessionConcurrencyConfig || JSON.stringify(config.defaults.sessionConcurrency)
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(rawSessionConfig)
+      } catch (parseError) {
+        logger.warn(
+          `⚠️ Failed to parse sessionConcurrencyConfig for API key ${keyData.id}, using fallback:`,
+          parseError
+        )
+        parsedSessionConcurrencyConfig = normalizeSessionConcurrencyConfig(
+          config.defaults.sessionConcurrency
+        )
       }
 
       return {

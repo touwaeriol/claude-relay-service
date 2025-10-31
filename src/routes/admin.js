@@ -2668,8 +2668,7 @@ router.post('/claude-accounts', authenticateAdmin, async (req, res) => {
       useUnifiedUserAgent: useUnifiedUserAgent === true, // 默认为false
       useUnifiedClientId: useUnifiedClientId === true, // 默认为false
       unifiedClientId: unifiedClientId || '', // 统一的客户端标识
-      rewriteSessionId:
-        platform === 'claude' && useUnifiedClientId === true && rewriteSessionId === true,
+      rewriteSessionId: platform === 'claude' && rewriteSessionId === true,
       expiresAt: expiresAt || null, // 账户订阅到期时间
       extInfo: extInfo || null,
       // 并发控制配置（对象）

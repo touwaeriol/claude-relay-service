@@ -205,6 +205,8 @@ npm run service:stop          # 停止服务
 - `DEBUG_HTTP_TRAFFIC`: 启用HTTP请求/响应调试日志（默认false，仅开发环境）
 - `PROXY_USE_IPV4`: 代理使用IPv4（默认true）
 - `REQUEST_TIMEOUT`: 请求超时时间（毫秒，默认600000即10分钟）
+- `CONCURRENCY_LIMITER_CACHE_TTL`: 请求并发控制 Limiter 缓存 TTL（毫秒，默认1800000即30分钟）
+- `SESSION_CONFIG_CACHE_TTL`: 会话并发控制配置缓存 TTL（毫秒，默认1800000即30分钟）
 
 #### AWS Bedrock配置（可选）
 - `CLAUDE_CODE_USE_BEDROCK`: 启用Bedrock（设置为1启用）
@@ -351,6 +353,15 @@ npm run setup  # 自动生成密钥并创建管理员账户
 11. **速率限制未清理**: rateLimitCleanupService每5分钟自动清理过期限流状态
 12. **成本统计不准确**: 运行 `npm run init:costs` 初始化成本数据，检查pricingService是否正确加载模型价格
 13. **缓存命中率低**: 查看缓存监控统计，调整LRU缓存大小配置
+14. **会话并发控制失败**:
+   - Redis 故障时会返回 503 错误（不降级），确保 Redis 连接正常
+   - 检查 Redis 中 `session_concurrency:*` 键的 TTL 是否正确刷新
+   - 查看会话并发配置哈希是否正确缓存（避免重复更新 TTL）
+   - 错误码参考：`SESSION_LIMIT_EXCEEDED`（会话数超限）、`REDIS_ERROR`（Redis 故障）
+15. **请求并发控制问题**:
+   - 检查 Bottleneck 配置是否正确应用（使用双重检查锁定模式）
+   - 查看并发统计：`skipsDueToUnchanged`（配置未变跳过）、`skipsDueToLockWait`（等待锁跳过）
+   - LRU 缓存 TTL 可通过 `CONCURRENCY_LIMITER_CACHE_TTL` 和 `SESSION_CONFIG_CACHE_TTL` 配置
 
 ### 调试工具
 
@@ -419,6 +430,8 @@ npm run setup  # 自动生成密钥并创建管理员账户
 - 中间件：`src/middleware/` 目录（auth.js、browserFallback.js、debugInterceptor.js等）
 - 配置管理：`config/config.js`（完整的多平台配置）
 - Redis 模型：`src/models/redis.js`
+- 常量定义：`src/constants/` 目录
+  - `errorCodes.js` - 错误码常量（并发控制、会话并发、Redis错误等）
 - 工具函数：`src/utils/` 目录
   - `logger.js` - 日志系统
   - `oauthHelper.js` - OAuth工具
@@ -462,9 +475,17 @@ npm run setup  # 自动生成密钥并创建管理员账户
 - **自动清理**: 定时清理任务（过期Key、错误账户、临时错误、并发计数、速率限制状态）
 - **缓存优化**: 多层LRU缓存（解密缓存、账户缓存），全局缓存监控和统计
 - **成本追踪**: 实时token使用统计（input/output/cache_create/cache_read）和成本计算（基于pricingService）
-- **并发控制**: Redis Sorted Set实现的并发计数，支持自动过期清理
+- **并发控制**:
+  - 请求并发：基于 Bottleneck 的分布式并发管理，使用双重检查锁定（DCL）模式避免重复配置更新
+  - 会话并发：Redis Sorted Set + Lua 脚本实现原子操作，滑动时间窗口自动过期
+  - 配置缓存：LRU 缓存配置哈希，避免频繁更新 Redis TTL
+  - 统计监控：跟踪配置更新跳过次数（`skipsDueToUnchanged`、`skipsDueToLockWait`）
 - **客户端识别**: 基于User-Agent的客户端限制，支持预定义客户端（ClaudeCode、Gemini-CLI等）
-- **错误处理**: 529错误自动标记账户过载状态，配置时长内自动排除该账户
+- **错误码管理**: 集中式错误码定义（`src/constants/errorCodes.js`），包含并发控制、会话并发、Redis 错误等标准错误码
+- **错误处理**:
+  - 529错误自动标记账户过载状态，配置时长内自动排除该账户
+  - Redis 故障时返回 503 错误（不降级），确保服务可靠性
+  - 结构化错误响应，包含错误码、消息和详细信息
 
 ### 核心数据流和性能优化
 

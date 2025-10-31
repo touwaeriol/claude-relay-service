@@ -127,26 +127,26 @@ function normalizeConfig(rawConfig) {
 
 /**
  * 验证配置是否有效
- * @param {Object} config - 要验证的配置
+ * @param {Object} configToValidate - 要验证的配置
  * @returns {Object} { valid: boolean, errors: string[] }
  */
-function validateConfig(config) {
+function validateConfig(configToValidate) {
   const errors = []
 
-  if (!config || typeof config !== 'object') {
+  if (!configToValidate || typeof configToValidate !== 'object') {
     errors.push('Config must be an object')
     return { valid: false, errors }
   }
 
-  if (typeof config.enabled !== 'boolean') {
+  if (typeof configToValidate.enabled !== 'boolean') {
     errors.push('enabled must be a boolean')
   }
 
-  if (!Number.isInteger(config.maxSessions) || config.maxSessions < 1) {
+  if (!Number.isInteger(configToValidate.maxSessions) || configToValidate.maxSessions < 1) {
     errors.push('maxSessions must be an integer >= 1')
   }
 
-  if (!Number.isInteger(config.windowSeconds) || config.windowSeconds < 60) {
+  if (!Number.isInteger(configToValidate.windowSeconds) || configToValidate.windowSeconds < 60) {
     errors.push('windowSeconds must be an integer >= 60')
   }
 
@@ -156,8 +156,29 @@ function validateConfig(config) {
   }
 }
 
+/**
+ * 生成配置的哈希值（用于缓存键和配置比较）
+ *
+ * 使用完整的配置信息（enabled-maxSessions-windowSeconds）生成哈希字符串
+ * 当配置的任何字段变化时，哈希值都会改变
+ *
+ * @param {Object} configToHash - 标准化后的配置对象
+ * @returns {string} 配置哈希值
+ *
+ * @example
+ * getConfigHash({ enabled: true, maxSessions: 10, windowSeconds: 3600 })
+ * // => "true-10-3600"
+ */
+function getConfigHash(configToHash) {
+  if (!configToHash || typeof configToHash !== 'object') {
+    return 'undefined'
+  }
+  return `${configToHash.enabled}-${configToHash.maxSessions}-${configToHash.windowSeconds}`
+}
+
 module.exports = {
   DEFAULT_CONFIG,
   normalizeConfig,
-  validateConfig
+  validateConfig,
+  getConfigHash
 }

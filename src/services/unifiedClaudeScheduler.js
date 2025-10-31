@@ -5,7 +5,7 @@ const ccrAccountService = require('./ccrAccountService')
 const accountGroupService = require('./accountGroupService')
 const redis = require('../models/redis')
 const logger = require('../utils/logger')
-const config = require('../../config/config')
+// const config = require('../../config/config') // 暂时未使用
 const { parseVendorPrefixedModel } = require('../utils/modelHelper')
 
 class UnifiedClaudeScheduler {
@@ -329,7 +329,7 @@ class UnifiedClaudeScheduler {
             )
             if (isAvailable) {
               let accountDetails = null
-              let canUseStickyMapping = true
+              const _canUseStickyMapping = true
 
               if (mappedAccount.accountType === 'claude-official') {
                 accountDetails = await redis.getClaudeAccount(mappedAccount.accountId)
@@ -1205,7 +1205,7 @@ class UnifiedClaudeScheduler {
     sessionHash = null,
     requestedModel = null,
     allowCcr = false,
-    sessionContext = null
+    _sessionContext = null
   ) {
     try {
       // 获取分组信息

@@ -7,6 +7,7 @@ const claudeAccountService = require('./claudeAccountService')
 const unifiedClaudeScheduler = require('./unifiedClaudeScheduler')
 const sessionHelper = require('../utils/sessionHelper')
 const concurrencyManager = require('./concurrencyManager')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 const {
   checkAccountSessionLimit,
   checkApiKeySessionLimit
@@ -137,7 +138,6 @@ class ClaudeRelayService {
           { sessionContext }
         )
       }
-
     } catch (error) {
       if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
         const err = new Error(error.message)
@@ -211,7 +211,7 @@ class ClaudeRelayService {
             )
             logger.debug(`✅ Acquired concurrency slot for ${accountId}`)
           } catch (error) {
-            if (error.code === 'QUEUE_FULL') {
+            if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
               logger.warn(
                 `🚫 Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
               )
@@ -228,7 +228,7 @@ class ClaudeRelayService {
                 }),
                 accountId
               }
-            } else if (error.code === 'TIMEOUT') {
+            } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
               logger.warn(`⏱️ Concurrency timeout for ${accountId}: waited ${error.timeout}s`)
               return {
                 statusCode: 503,
@@ -245,7 +245,7 @@ class ClaudeRelayService {
                 }),
                 accountId
               }
-            } else if (error.code === 'CLIENT_DISCONNECTED') {
+            } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
               logger.info(`🔌 Client disconnected while waiting for concurrency slot: ${accountId}`)
               // 客户端已断开，直接返回（不发送响应）
               return {
@@ -634,7 +634,7 @@ class ClaudeRelayService {
   }
 
   // 🔄 处理请求体
-  _processRequestBody(body, account = null, apiKeyData = null) {
+  _processRequestBody(body, account = null, _apiKeyData = null) {
     if (!body) {
       return body
     }
@@ -745,13 +745,7 @@ class ClaudeRelayService {
 
     if (account) {
       rewriteSessionId(processedBody, {
-        account,
-        apiKeyId:
-          apiKeyData?.id ||
-          apiKeyData?.apiKeyId ||
-          apiKeyData?.keyId ||
-          apiKeyData?.api_key_id ||
-          null
+        account
       })
     }
 
@@ -1391,7 +1385,7 @@ class ClaudeRelayService {
             )
             logger.debug(`✅ [Stream] Acquired concurrency slot for ${accountId}`)
           } catch (error) {
-            if (error.code === 'QUEUE_FULL') {
+            if (error.code === CONCURRENCY_ERRORS.QUEUE_FULL) {
               logger.warn(
                 `🚫 [Stream] Concurrency queue full for ${accountId}: ${error.currentWaiting} waiting, max ${error.maxQueueSize}`
               )
@@ -1408,7 +1402,7 @@ class ClaudeRelayService {
               )
               responseStream.end()
               return
-            } else if (error.code === 'TIMEOUT') {
+            } else if (error.code === CONCURRENCY_ERRORS.TIMEOUT) {
               logger.warn(
                 `⏱️ [Stream] Concurrency timeout for ${accountId}: waited ${error.timeout}s`
               )
@@ -1424,7 +1418,7 @@ class ClaudeRelayService {
               )
               responseStream.end()
               return
-            } else if (error.code === 'CLIENT_DISCONNECTED') {
+            } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
               logger.info(
                 `🔌 [Stream] Client disconnected while waiting for concurrency slot: ${accountId}`
               )
@@ -2181,7 +2175,7 @@ class ClaudeRelayService {
           responseStream.write(
             `data: ${JSON.stringify({
               error: 'Request timeout',
-              code: 'TIMEOUT',
+              code: CONCURRENCY_ERRORS.TIMEOUT,
               timestamp: new Date().toISOString()
             })}\n\n`
           )

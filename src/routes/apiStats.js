@@ -137,9 +137,7 @@ router.post('/api/user-stats', async (req, res) => {
         allowedClients = []
       }
 
-      const concurrencyConfig = concurrencyManager.normalizeConfig(
-        keyData.concurrencyConfig
-      )
+      const concurrencyConfig = concurrencyManager.normalizeConfig(keyData.concurrencyConfig)
 
       const derivedConcurrencyLimit = concurrencyConfig.enabled
         ? concurrencyConfig.maxConcurrency
@@ -212,13 +210,9 @@ router.post('/api/user-stats', async (req, res) => {
     // 获取验证结果中的完整keyData（包含isActive状态和cost信息）
     const fullKeyData = keyData
 
-    const concurrencyConfig = concurrencyManager.normalizeConfig(
-      fullKeyData.concurrencyConfig
-    )
+    const concurrencyConfig = concurrencyManager.normalizeConfig(fullKeyData.concurrencyConfig)
 
-    const derivedConcurrencyLimit = concurrencyConfig.enabled
-      ? concurrencyConfig.maxConcurrency
-      : 0
+    const derivedConcurrencyLimit = concurrencyConfig.enabled ? concurrencyConfig.maxConcurrency : 0
 
     const concurrencyStats = await concurrencyManager.getStats(`apikey:${keyId}`)
     const currentConcurrency = concurrencyStats ? concurrencyStats.running : 0
@@ -414,9 +408,7 @@ router.post('/api/user-stats', async (req, res) => {
     let sessionTtl = 0
     if (sessionConcurrencyConfig.enabled) {
       try {
-        const sessionStats = await sessionConcurrencyManager.getAccountStats(
-          `apikey:${keyId}`
-        )
+        const sessionStats = await sessionConcurrencyManager.getAccountStats(`apikey:${keyId}`)
         if (sessionStats) {
           currentSessions = sessionStats.current || 0
           sessionTtl = sessionStats.ttl || 0

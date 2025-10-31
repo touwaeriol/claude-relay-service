@@ -55,8 +55,8 @@ async function buildSessionContext(sessionHash, requestBody) {
   const isNewSession = !shouldTreatAsExisting && hasOnlyUserMessages
 
   logger.debug(
-    `🧭 Session context resolved: session=${sessionHash ? sessionHash.substring(0, 8) + '...' : 'none'}, ` +
-      `new=${isNewSession}, sticky=${stickyAccountId ? stickyAccountId.substring(0, 8) + '...' : 'none'}`
+    `🧭 Session context resolved: session=${sessionHash ? `${sessionHash.substring(0, 8)}...` : 'none'}, ` +
+      `new=${isNewSession}, sticky=${stickyAccountId ? `${stickyAccountId.substring(0, 8)}...` : 'none'}`
   )
 
   return {

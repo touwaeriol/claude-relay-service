@@ -10,6 +10,7 @@
 const logger = require('./logger')
 const sessionConcurrencyManager = require('../services/sessionConcurrencyManager')
 const { normalizeConfig } = require('./sessionConcurrencyConfigHelper')
+const { SESSION_CONCURRENCY_ERRORS, REDIS_ERRORS } = require('../constants/errorCodes')
 
 /**
  * 检查账户的会话并发限制
@@ -130,7 +131,7 @@ async function checkAccountSessionLimit(options) {
     }
   } catch (error) {
     // SESSION_LIMIT_EXCEEDED 错误已在上面处理
-    if (error.code === 'SESSION_LIMIT_EXCEEDED') {
+    if (error.code === SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED) {
       // 不应该到这里，但为了安全性还是处理一下
       logger.error(
         `❌ [SessionConcurrency] Unexpected SESSION_LIMIT_EXCEEDED error:`,
@@ -150,12 +151,37 @@ async function checkAccountSessionLimit(options) {
       }
     }
 
-    // 其他错误：记录日志但允许请求（降级策略）
+    // 其他错误：记录日志并返回 503 错误
     logger.error(
       `❌ [SessionConcurrency]${isStreaming ? '[Stream]' : ''} Check failed for ${account.id || 'unknown'}:`,
       error
     )
-    return { allowed: true }
+
+    // 🔴 移除 "return { allowed: true }"，改为返回错误
+    const errorResponse = {
+      error: REDIS_ERRORS.REDIS_ERROR,
+      message: 'Session concurrency check unavailable',
+      details: { originalError: error.message }
+    }
+
+    if (isStreaming && responseStream) {
+      responseStream.writeHead(503, {
+        'Content-Type': 'text/event-stream',
+        'Retry-After': '60'
+      })
+      responseStream.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`)
+      responseStream.end()
+      return { allowed: false, streamHandled: true }
+    }
+
+    return {
+      allowed: false,
+      error: {
+        statusCode: 503,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+        body: JSON.stringify(errorResponse)
+      }
+    }
   }
 }
 
@@ -225,7 +251,7 @@ async function checkApiKeySessionLimit(options) {
       }
     }
   } catch (error) {
-    if (error.code === 'SESSION_LIMIT_EXCEEDED') {
+    if (error.code === SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED) {
       logger.error(
         `❌ [SessionConcurrency][APIKey] Unexpected SESSION_LIMIT_EXCEEDED error:`,
         error.message
@@ -244,11 +270,37 @@ async function checkApiKeySessionLimit(options) {
       }
     }
 
+    // 其他错误：记录日志并返回 503 错误
     logger.error(
       `❌ [SessionConcurrency][APIKey]${isStreaming ? '[Stream]' : ''} Check failed for ${apiKeyData.id}:`,
       error
     )
-    return { allowed: true }
+
+    // 🔴 移除 "return { allowed: true }"，改为返回错误
+    const errorResponse = {
+      error: REDIS_ERRORS.REDIS_ERROR,
+      message: 'Session concurrency check unavailable',
+      details: { originalError: error.message }
+    }
+
+    if (isStreaming && responseStream) {
+      responseStream.writeHead(503, {
+        'Content-Type': 'text/event-stream',
+        'Retry-After': '60'
+      })
+      responseStream.write(`event: error\ndata: ${JSON.stringify(errorResponse)}\n\n`)
+      responseStream.end()
+      return { allowed: false, streamHandled: true }
+    }
+
+    return {
+      allowed: false,
+      error: {
+        statusCode: 503,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+        body: JSON.stringify(errorResponse)
+      }
+    }
   }
 }
 

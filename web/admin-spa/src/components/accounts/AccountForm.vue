@@ -1577,61 +1577,61 @@
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                   </p>
-                  <div v-if="form.useUnifiedClientId" class="mt-3 space-y-3">
-                    <div
-                      class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
-                    >
-                      <div class="mb-2 flex items-center justify-between">
-                        <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                          >客户端标识 ID</span
-                        >
-                        <button
-                          class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                          type="button"
-                          @click="regenerateClientId"
-                        >
-                          <i class="fas fa-sync-alt mr-1" />
-                          重新生成
-                        </button>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <code
-                          class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                        >
-                          <span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(0, 8)
-                          }}</span
-                          ><span class="text-gray-500 dark:text-gray-500">{{
-                            form.unifiedClientId.substring(8, 56)
-                          }}</span
-                          ><span class="text-blue-600 dark:text-blue-400">{{
-                            form.unifiedClientId.substring(56)
-                          }}</span>
-                        </code>
-                      </div>
-                      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        <i class="fas fa-info-circle mr-1 text-blue-500" />
-                        此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
-                      </p>
+                  <div
+                    v-if="form.useUnifiedClientId"
+                    class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+                  >
+                    <div class="mb-2 flex items-center justify-between">
+                      <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
+                        >客户端标识 ID</span
+                      >
+                      <button
+                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                        type="button"
+                        @click="regenerateClientId"
+                      >
+                        <i class="fas fa-sync-alt mr-1" />
+                        重新生成
+                      </button>
                     </div>
-                    <label class="flex items-start">
-                      <input
-                        v-model="form.rewriteSessionId"
-                        class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                        type="checkbox"
-                      />
-                      <div class="ml-3">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          替换会话 ID
-                        </span>
-                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          开启后，将基于账户和会话信息生成新的 session UUID，避免相同会话在不同账户上复用同一个 ID。
-                        </p>
-                      </div>
-                    </label>
+                    <div class="flex items-center gap-2">
+                      <code
+                        class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                      >
+                        <span class="text-blue-600 dark:text-blue-400">{{
+                          form.unifiedClientId.substring(0, 8)
+                        }}</span
+                        ><span class="text-gray-500 dark:text-gray-500">{{
+                          form.unifiedClientId.substring(8, 56)
+                        }}</span
+                        ><span class="text-blue-600 dark:text-blue-400">{{
+                          form.unifiedClientId.substring(56)
+                        }}</span>
+                      </code>
+                    </div>
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      <i class="fas fa-info-circle mr-1 text-blue-500" />
+                      此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                    </p>
                   </div>
                 </div>
               </label>
+              <div class="mt-3 flex items-start">
+                <input
+                  v-model="form.rewriteSessionId"
+                  class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  type="checkbox"
+                />
+                <div class="ml-3">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    替换会话 ID
+                  </span>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    开启后，将基于账户和会话信息生成新的 session
+                    UUID，避免相同会话在不同账户上复用同一个 ID。
+                  </p>
+                </div>
+              </div>
             </div>
 
             <!-- 并发控制配置（创建模式） -->
@@ -2419,61 +2419,61 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   开启后将使用固定的客户端标识，使所有请求看起来来自同一个客户端，减少特征
                 </p>
-                <div v-if="form.useUnifiedClientId" class="mt-3 space-y-3">
-                  <div
-                    class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
-                  >
-                    <div class="mb-2 flex items-center justify-between">
-                      <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
-                        >客户端标识 ID</span
-                      >
-                      <button
-                        class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
-                        type="button"
-                        @click="regenerateClientId"
-                      >
-                        <i class="fas fa-sync-alt mr-1" />
-                        重新生成
-                      </button>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <code
-                        class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
-                      >
-                        <span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(0, 8)
-                        }}</span
-                        ><span class="text-gray-500 dark:text-gray-500">{{
-                          form.unifiedClientId.substring(8, 56)
-                        }}</span
-                        ><span class="text-blue-600 dark:text-blue-400">{{
-                          form.unifiedClientId.substring(56)
-                        }}</span>
-                      </code>
-                    </div>
-                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                      <i class="fas fa-info-circle mr-1 text-blue-500" />
-                      此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
-                    </p>
+                <div
+                  v-if="form.useUnifiedClientId"
+                  class="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-800/50"
+                >
+                  <div class="mb-2 flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-600 dark:text-gray-400"
+                      >客户端标识 ID</span
+                    >
+                    <button
+                      class="rounded-md bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50"
+                      type="button"
+                      @click="regenerateClientId"
+                    >
+                      <i class="fas fa-sync-alt mr-1" />
+                      重新生成
+                    </button>
                   </div>
-                  <label class="flex items-start">
-                    <input
-                      v-model="form.rewriteSessionId"
-                      class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                      type="checkbox"
-                    />
-                    <div class="ml-3">
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        替换会话 ID
-                      </span>
-                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        开启后，将基于账户和会话信息生成新的 session UUID，避免相同会话在不同账户上复用同一个 ID。
-                      </p>
-                    </div>
-                  </label>
+                  <div class="flex items-center gap-2">
+                    <code
+                      class="block w-full select-all break-all rounded bg-gray-100 px-3 py-2 font-mono text-xs text-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                    >
+                      <span class="text-blue-600 dark:text-blue-400">{{
+                        form.unifiedClientId.substring(0, 8)
+                      }}</span
+                      ><span class="text-gray-500 dark:text-gray-500">{{
+                        form.unifiedClientId.substring(8, 56)
+                      }}</span
+                      ><span class="text-blue-600 dark:text-blue-400">{{
+                        form.unifiedClientId.substring(56)
+                      }}</span>
+                    </code>
+                  </div>
+                  <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    <i class="fas fa-info-circle mr-1 text-blue-500" />
+                    此ID将替换请求中的user_id客户端部分，保留session部分用于粘性会话
+                  </p>
                 </div>
               </div>
             </label>
+            <div class="mt-3 flex items-start">
+              <input
+                v-model="form.rewriteSessionId"
+                class="mt-1 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                type="checkbox"
+              />
+              <div class="ml-3">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  替换会话 ID
+                </span>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  开启后，将基于账户和会话信息生成新的 session
+                  UUID，避免相同会话在不同账户上复用同一个 ID。
+                </p>
+              </div>
+            </div>
           </div>
 
           <!-- 并发控制配置（编辑模式） -->
@@ -3635,9 +3635,7 @@ const form = ref({
   useUnifiedClientId: props.account?.useUnifiedClientId || false, // 使用统一的客户端标识
   unifiedClientId: props.account?.unifiedClientId || '', // 统一的客户端标识
   rewriteSessionId:
-    props.account?.rewriteSessionId !== undefined
-      ? !!props.account?.rewriteSessionId
-      : false,
+    props.account?.rewriteSessionId !== undefined ? !!props.account?.rewriteSessionId : false,
   groupId: '',
   groupIds: [],
   projectId: props.account?.projectId || '',
@@ -4227,8 +4225,7 @@ const handleOAuthSuccess = async (tokenInfo) => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
-      data.rewriteSessionId =
-        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4546,8 +4543,7 @@ const createAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
-      data.rewriteSessionId =
-        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 添加订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -4934,8 +4930,7 @@ const updateAccount = async () => {
       data.useUnifiedUserAgent = form.value.useUnifiedUserAgent || false
       data.useUnifiedClientId = form.value.useUnifiedClientId || false
       data.unifiedClientId = form.value.unifiedClientId || ''
-      data.rewriteSessionId =
-        form.value.useUnifiedClientId && form.value.rewriteSessionId ? true : false
+      data.rewriteSessionId = !!form.value.rewriteSessionId
       // 更新订阅类型信息
       data.subscriptionInfo = {
         accountType: form.value.subscriptionType || 'claude_max',
@@ -5418,15 +5413,6 @@ watch(
   }
 )
 
-watch(
-  () => form.value.useUnifiedClientId,
-  (enabled) => {
-    if (!enabled) {
-      form.value.rewriteSessionId = false
-    }
-  }
-)
-
 // 监听账户类型变化
 watch(
   () => form.value.accountType,
@@ -5741,8 +5727,6 @@ const handleUnifiedClientIdChange = () => {
     if (!form.value.unifiedClientId) {
       form.value.unifiedClientId = generateClientId()
     }
-  } else {
-    form.value.rewriteSessionId = false
   }
 }
 

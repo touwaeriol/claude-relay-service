@@ -152,9 +152,7 @@ class ClaudeAccountService {
 
     const unifiedClientEnabled = useUnifiedClientId === true || useUnifiedClientId === 'true'
     const rewriteSessionIdEnabled =
-      platform === 'claude' &&
-      unifiedClientEnabled &&
-      (rewriteSessionId === true || rewriteSessionId === 'true')
+      platform === 'claude' && (rewriteSessionId === true || rewriteSessionId === 'true')
 
     if (claudeAiOauth) {
       // 使用Claude标准格式的OAuth数据
@@ -846,10 +844,8 @@ class ClaudeAccountService {
       }
 
       const platformIsClaude = (accountData.platform || '').toLowerCase() === 'claude'
-      const unifiedClientEnabledFinal =
-        updatedData.useUnifiedClientId === 'true' || updatedData.useUnifiedClientId === true
 
-      if (!platformIsClaude || !unifiedClientEnabledFinal) {
+      if (!platformIsClaude) {
         updatedData.rewriteSessionId = 'false'
       } else if (Object.prototype.hasOwnProperty.call(updates, 'rewriteSessionId')) {
         const rewriteFlag = updates.rewriteSessionId === true || updates.rewriteSessionId === 'true'

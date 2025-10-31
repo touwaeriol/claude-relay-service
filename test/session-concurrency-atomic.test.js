@@ -5,6 +5,7 @@
 
 const IORedis = require('ioredis')
 const sessionConcurrencyManager = require('../src/services/sessionConcurrencyManager')
+const { SESSION_CONCURRENCY_ERRORS, REDIS_ERRORS } = require('../src/constants/errorCodes')
 
 describe('Session Concurrency - Lua Script Atomicity Tests', () => {
   let redis
@@ -137,7 +138,7 @@ describe('Session Concurrency - Lua Script Atomicity Tests', () => {
 
       expect(result.allowed).toBe(false)
       expect(result.error).toBeDefined()
-      expect(result.error.code).toBe('SESSION_LIMIT_EXCEEDED')
+      expect(result.error.code).toBe(SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED)
       expect(result.stats).toBeDefined()
       expect(result.stats.current).toBe(3)
       expect(result.stats.max).toBe(3)
@@ -224,7 +225,7 @@ describe('Session Concurrency - Lua Script Atomicity Tests', () => {
       // 验证所有被拒绝的请求都返回了正确的错误
       rejected.forEach((result) => {
         expect(result.error).toBeDefined()
-        expect(result.error.code).toBe('SESSION_LIMIT_EXCEEDED')
+        expect(result.error.code).toBe(SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED)
         expect(result.stats).toBeDefined()
         expect(result.stats.current).toBeGreaterThanOrEqual(5)
       })
@@ -441,6 +442,144 @@ describe('Session Concurrency - Lua Script Atomicity Tests', () => {
         config
       )
       expect(result.allowed).toBe(true)
+    })
+  })
+
+  describe('Redis 故障处理测试', () => {
+    it('应该在 Redis eval 失败时抛出错误（不降级）', async () => {
+      const accountId = 'test-account-redis-fail'
+      const sessionHash = 'session-fail'
+      const config = {
+        enabled: true,
+        maxSessions: 5,
+        windowSeconds: 3600
+      }
+
+      // 模拟 Redis 错误：关闭当前 Redis 连接
+      const originalRedis = sessionConcurrencyManager.redis
+      if (originalRedis) {
+        await originalRedis.quit()
+        sessionConcurrencyManager.redis = null
+      }
+
+      // 创建一个会立即失败的 Redis 连接
+      const failingRedis = new IORedis({
+        host: 'invalid-redis-host-12345.example.com',
+        port: 9999,
+        connectTimeout: 100,
+        retryStrategy: () => null // 不重试
+      })
+
+      sessionConcurrencyManager.redis = failingRedis
+
+      try {
+        await expect(
+          sessionConcurrencyManager.checkSessionLimit(accountId, sessionHash, config)
+        ).rejects.toThrow()
+      } finally {
+        // 清理：恢复原始 Redis 连接
+        if (failingRedis) {
+          failingRedis.disconnect()
+        }
+        sessionConcurrencyManager.redis = null
+      }
+    })
+
+    it('应该在 accountId 无效时返回错误', async () => {
+      const config = {
+        enabled: true,
+        maxSessions: 5,
+        windowSeconds: 3600
+      }
+
+      // accountId 为空字符串
+      const result1 = await sessionConcurrencyManager.checkSessionLimit('', 'session-1', config)
+      expect(result1.allowed).toBe(false)
+      expect(result1.error).toBeDefined()
+      expect(result1.error.code).toBe(SESSION_CONCURRENCY_ERRORS.INVALID_ACCOUNT_ID)
+
+      // accountId 为 null
+      const result2 = await sessionConcurrencyManager.checkSessionLimit(null, 'session-1', config)
+      expect(result2.allowed).toBe(false)
+      expect(result2.error).toBeDefined()
+      expect(result2.error.code).toBe(SESSION_CONCURRENCY_ERRORS.INVALID_ACCOUNT_ID)
+    })
+
+    it('应该在达到会话上限时返回正确的错误码', async () => {
+      const accountId = 'test-account-error-code'
+      const config = {
+        enabled: true,
+        maxSessions: 2,
+        windowSeconds: 3600
+      }
+
+      // 添加两个会话
+      await sessionConcurrencyManager.checkSessionLimit(accountId, 'session-1', config)
+      await sessionConcurrencyManager.checkSessionLimit(accountId, 'session-2', config)
+
+      // 第三个会话应该被拒绝
+      const result = await sessionConcurrencyManager.checkSessionLimit(
+        accountId,
+        'session-3',
+        config
+      )
+      expect(result.allowed).toBe(false)
+      expect(result.error).toBeDefined()
+      expect(result.error.code).toBe(SESSION_CONCURRENCY_ERRORS.SESSION_LIMIT_EXCEEDED)
+      expect(result.error.accountId).toBe(accountId)
+      expect(result.error.currentSessions).toBe(2)
+      expect(result.error.maxSessions).toBe(2)
+    })
+  })
+
+  describe('Redis 故障处理', () => {
+    afterEach(async () => {
+      jest.restoreAllMocks()
+      await sessionConcurrencyManager.dispose()
+      sessionConcurrencyManager.accountConfigs.clear()
+      sessionConcurrencyManager.redis = null
+    })
+
+    it('Redis eval 抛错时应该抛出自定义错误', async () => {
+      await sessionConcurrencyManager.dispose()
+
+      const fakeRedisError = new Error('Redis down')
+      const fakeRedis = {
+        eval: jest.fn(() => Promise.reject(fakeRedisError)),
+        expire: jest.fn(),
+        quit: jest.fn().mockResolvedValue()
+      }
+
+      jest
+        .spyOn(sessionConcurrencyManager, '_getRedis')
+        .mockImplementation(() => {
+          sessionConcurrencyManager.redis = fakeRedis
+          return fakeRedis
+        })
+
+      const config = {
+        enabled: true,
+        maxSessions: 1,
+        windowSeconds: 60
+      }
+
+      await expect(
+        sessionConcurrencyManager.checkSessionLimit('redis-error-account', 'hash', config)
+      ).rejects.toMatchObject({
+        code: REDIS_ERRORS.REDIS_ERROR,
+        originalError: fakeRedisError
+      })
+
+      expect(fakeRedis.eval).toHaveBeenCalledWith(
+        expect.any(String),
+        1,
+        expect.any(String),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(Number),
+        expect.any(String),
+        expect.any(Number)
+      )
     })
   })
 })
