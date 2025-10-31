@@ -17,6 +17,7 @@ const {
 } = require('../utils/claudeSessionCoordinator')
 const { updateRateLimitCounters } = require('../utils/rateLimitHelper')
 const { sanitizeUpstreamError } = require('../utils/errorSanitizer')
+const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
 const router = express.Router()
 
 function queueRateLimitUpdate(rateLimitInfo, usageSummary, model, context = '') {
@@ -103,7 +104,7 @@ async function handleMessagesRequest(req, res) {
     const sessionId = req.body?.session_id || req.headers['session_id'] || null
     try {
       const serializedBody = JSON.stringify(req.body, null, 2)
-      logger.info(
+      logger.debug(
         `🧾 Full /api/v1/messages payload (session: ${sessionId || 'null'})\n${serializedBody}`
       )
     } catch (serializationError) {
@@ -722,6 +723,15 @@ async function handleMessagesRequest(req, res) {
     logger.api(`✅ Request completed in ${duration}ms for key: ${req.apiKey.name}`)
     return undefined
   } catch (error) {
+    // ✅ 处理客户端断开连接异常（不发送响应）
+    if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
+      logger.info(`⏭️ Client disconnected for key: ${req.apiKey?.name || 'unknown'}`, {
+        accountId: error.accountId
+      })
+      // 客户端已断开，直接返回，不发送响应
+      return
+    }
+
     logger.error('❌ Claude relay error:', error.message, {
       code: error.code,
       stack: error.stack

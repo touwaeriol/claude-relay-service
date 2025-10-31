@@ -1,4 +1,3 @@
-const IORedis = require('ioredis')
 const { LRUCache } = require('lru-cache')
 const logger = require('../utils/logger')
 const appConfig = require('../../config/config')
@@ -7,6 +6,7 @@ const {
   getConfigHash
 } = require('../utils/sessionConcurrencyConfigHelper')
 const { SESSION_CONCURRENCY_ERRORS, REDIS_ERRORS } = require('../constants/errorCodes')
+const redisConnectionManager = require('../utils/redisConnectionManager')
 
 /**
  * 会话并发控制管理器
@@ -60,11 +60,6 @@ const LRU_CACHE_TTL_MS = 30 * 60 * 1000 // 30 分钟
 class SessionConcurrencyManager {
   constructor() {
     /**
-     * Redis 客户端（懒加载）
-     */
-    this.redis = null
-
-    /**
      * 配置缓存（用于配置变更检测）
      * 存储每个账户的上次使用配置哈希
      * 类似 concurrencyManager 的 limiters 缓存 Bottleneck 实例配置
@@ -77,41 +72,12 @@ class SessionConcurrencyManager {
   }
 
   /**
-   * 获取 Redis 客户端（懒加载）
+   * 获取 Redis 客户端（复用全局连接池）
    * @private
-   * @returns {IORedis} Redis 客户端实例
+   * @returns {import('ioredis').Redis} Redis 客户端实例
    */
   _getRedis() {
-    if (!this.redis) {
-      const redisOptions = {
-        host: appConfig.redis.host,
-        port: appConfig.redis.port,
-        password: appConfig.redis.password || undefined,
-        db: appConfig.redis.db,
-        lazyConnect: false,
-        maxRetriesPerRequest: appConfig.redis.maxRetriesPerRequest,
-        retryDelayOnFailover: appConfig.redis.retryDelayOnFailover,
-        connectTimeout: appConfig.redis.connectTimeout
-      }
-
-      if (appConfig.redis.enableTLS) {
-        redisOptions.tls = {}
-      }
-
-      // 清理 undefined/null 值
-      Object.keys(redisOptions).forEach((key) => {
-        if (redisOptions[key] === undefined || redisOptions[key] === null) {
-          delete redisOptions[key]
-        }
-      })
-
-      this.redis = new IORedis(redisOptions)
-
-      this.redis.on('error', (err) => {
-        logger.error('❌ SessionConcurrencyManager Redis error:', err)
-      })
-    }
-    return this.redis
+    return redisConnectionManager.getRedisClient()
   }
 
   /**
@@ -229,12 +195,12 @@ class SessionConcurrencyManager {
       const [success, action, currentCount] = result
 
       // 🔍 检查配置是否变化（使用完整哈希）
+      // 注意：Lua 脚本已经刷新了 TTL，这里只需要更新缓存
       const configHash = getConfigHash(normalizedConfig)
       const cachedHash = this.accountConfigs.get(accountId)
 
       if (cachedHash !== configHash) {
-        // 配置变化，刷新 TTL 并更新缓存
-        await redis.expire(redisKey, windowSeconds)
+        // 配置变化，只更新缓存（TTL 已由 Lua 脚本刷新）
         this.accountConfigs.set(accountId, configHash)
         logger.debug(
           `🔄 [SessionConcurrency] Config updated for ${accountId}: hash=${configHash.substring(0, 16)}...`
@@ -399,21 +365,13 @@ class SessionConcurrencyManager {
   }
 
   /**
-   * 清理资源（断开Redis连接并清空缓存）
+   * 清理资源（清空缓存）
+   * 注意：Redis 连接由全局连接池管理，这里不需要关闭
    */
   async dispose() {
     // 清空配置缓存
     this.accountConfigs.clear()
-
-    if (this.redis) {
-      try {
-        await this.redis.quit()
-        this.redis = null
-        logger.info('✅ [SessionConcurrency] Redis connection closed')
-      } catch (error) {
-        logger.error('❌ [SessionConcurrency] Failed to close Redis connection:', error)
-      }
-    }
+    logger.info('✅ [SessionConcurrency] Manager disposed (cache cleared)')
   }
 }
 

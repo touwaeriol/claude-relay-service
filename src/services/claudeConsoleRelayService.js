@@ -115,13 +115,11 @@ class ClaudeConsoleRelayService {
             logger.info(
               `🔌 [Console NonStream] Client disconnected while waiting for concurrency slot: ${accountId}`
             )
-            return {
-              statusCode: 499,
-              headers: {},
-              body: '',
-              accountId,
-              skipResponse: true
-            }
+            // 客户端已断开，抛出异常中断执行
+            const disconnectError = new Error('Client disconnected')
+            disconnectError.code = CONCURRENCY_ERRORS.CLIENT_DISCONNECTED
+            disconnectError.accountId = accountId
+            throw disconnectError
           }
           // 其他错误继续抛出
           throw error

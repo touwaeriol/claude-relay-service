@@ -1,9 +1,9 @@
 const Bottleneck = require('bottleneck')
 const { LRUCache } = require('lru-cache')
-const IORedis = require('ioredis')
 const logger = require('../utils/logger')
 const appConfig = require('../../config/config')
 const { CONCURRENCY_ERRORS } = require('../constants/errorCodes')
+const redisConnectionManager = require('../utils/redisConnectionManager')
 
 /**
  * 并发控制管理器（基于 Bottleneck + node-cache）
@@ -60,11 +60,6 @@ class ConcurrencyManager {
         this._disposeLimiter(key, value, reason)
       }
     })
-
-    /**
-     * Bottleneck IORedisConnection（与全局Redis客户端共享）
-     */
-    this.redisConnection = null
 
     /**
      * 配置更新锁（防止并发更新竞态条件）
@@ -177,46 +172,12 @@ class ConcurrencyManager {
   }
 
   /**
-   * 获取 Redis 客户端（懒加载）
-   * @private
-   * @returns {object} Redis 客户端实例
-   */
-  /**
-   * 获取 Bottleneck IORedisConnection（懒加载，复用全局 Redis 客户端）
+   * 获取 Bottleneck IORedisConnection（复用全局连接池）
    * @private
    * @returns {import('bottleneck').IORedisConnection}
    */
   _getRedisConnection() {
-    if (!this.redisConnection) {
-      const { IORedisConnection } = Bottleneck
-      const redisOptions = {
-        host: appConfig.redis.host,
-        port: appConfig.redis.port,
-        password: appConfig.redis.password || undefined,
-        db: appConfig.redis.db,
-        lazyConnect: false,
-        maxRetriesPerRequest: appConfig.redis.maxRetriesPerRequest,
-        retryDelayOnFailover: appConfig.redis.retryDelayOnFailover,
-        connectTimeout: appConfig.redis.connectTimeout
-      }
-
-      if (appConfig.redis.enableTLS) {
-        redisOptions.tls = {}
-      }
-
-      Object.keys(redisOptions).forEach((key) => {
-        if (redisOptions[key] === undefined || redisOptions[key] === null) {
-          delete redisOptions[key]
-        }
-      })
-
-      this.redisConnection = new IORedisConnection({
-        clientOptions: redisOptions,
-        Redis: IORedis,
-        Promise
-      })
-    }
-    return this.redisConnection
+    return redisConnectionManager.getBottleneckConnection()
   }
 
   /**

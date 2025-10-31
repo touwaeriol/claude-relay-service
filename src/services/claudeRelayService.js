@@ -139,6 +139,18 @@ class ClaudeRelayService {
         )
       }
     } catch (error) {
+      if (error.code === 'CLAUDE_DEDICATED_RATE_LIMITED') {
+        const limitMessage = this._buildStandardRateLimitMessage(error.rateLimitEndAt)
+        const err = new Error(limitMessage)
+        err.status = 403
+        err.code = 'upstream_rate_limited'
+        err.accountId = error.accountId
+        err.body = JSON.stringify({
+          error: 'upstream_rate_limited',
+          message: limitMessage
+        })
+        throw err
+      }
       if (error.code === 'SESSION_CONTENT_MISMATCH' || error.code === 'SESSION_NOT_NEW') {
         const err = new Error(error.message)
         err.status = 422
@@ -247,14 +259,11 @@ class ClaudeRelayService {
               }
             } else if (error.code === CONCURRENCY_ERRORS.CLIENT_DISCONNECTED) {
               logger.info(`🔌 Client disconnected while waiting for concurrency slot: ${accountId}`)
-              // 客户端已断开，直接返回（不发送响应）
-              return {
-                statusCode: 499,
-                headers: {},
-                body: '',
-                accountId,
-                skipResponse: true // 标记跳过响应发送
-              }
+              // 客户端已断开，抛出异常中断执行
+              const disconnectError = new Error('Client disconnected')
+              disconnectError.code = CONCURRENCY_ERRORS.CLIENT_DISCONNECTED
+              disconnectError.accountId = accountId
+              throw disconnectError
             }
             // 其他错误继续抛出
             throw error
