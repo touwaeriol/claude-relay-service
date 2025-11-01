@@ -240,8 +240,15 @@ class ConcurrencyManager {
       this.limiters.set(resourceId, limiter, { ttl: this.limiterTtlMs })
       this.stats.totalCreated++
 
+      const executionTimeoutSeconds =
+        typeof normalizedConfig.executionTimeout === 'number' &&
+        normalizedConfig.executionTimeout > 0
+          ? normalizedConfig.executionTimeout
+          : null
+      const ttlMinutes = Math.floor(this.limiterTtlMs / 60000)
+
       logger.info(
-        `🆕 Created Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}, executionTimeout=${normalizedExecutionTimeout ?? 'disabled'}s, ttl=30m`
+        `🆕 Created Bottleneck for ${resourceId}: maxConcurrency=${maxConcurrency}, queueSize=${queueSize}, executionTimeout=${executionTimeoutSeconds ?? 'disabled'}s, ttl=${ttlMinutes}m`
       )
     } else {
       // 🔄 动态更新配置（异步、带锁）
