@@ -38,14 +38,17 @@ export default defineConfig(({ mode }) => {
     base: basePath,
     plugins: [
       vue(),
-      checker({
-        eslint: {
-          lintCommand: 'eslint "./src/**/*.{js,vue}" --cache=false',
-          dev: {
-            logLevel: ['error', 'warning']
+      // 仅在开发模式下启用 ESLint 检查
+      ...(mode === 'development' ? [
+        checker({
+          eslint: {
+            lintCommand: 'eslint "./src/**/*.{js,vue}" --cache=false',
+            dev: {
+              logLevel: ['error', 'warning']
+            }
           }
-        }
-      }),
+        })
+      ] : []),
       AutoImport({
         resolvers: [ElementPlusResolver()],
         imports: ['vue', 'vue-router', 'pinia']
