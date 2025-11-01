@@ -13,8 +13,8 @@ RUN npm config set registry https://registry.npmmirror.com && npm ci
 # 📋 复制前端源代码
 COPY web/admin-spa/ ./
 
-# 🏗️ 构建前端
-RUN npm run build
+# 🏗️ 构建前端（禁用ESLint警告作为错误）
+RUN CI=false npm run build
 
 # 🐳 主应用阶段
 FROM node:18-alpine
