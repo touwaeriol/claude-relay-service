@@ -13,8 +13,8 @@ RUN npm ci
 # 📋 复制前端源代码
 COPY web/admin-spa/ ./
 
-# 🏗️ 构建前端
-RUN npm run build
+# 🏗️ 构建前端 (增加 Node.js heap 内存)
+RUN NODE_OPTIONS="--max-old-space-size=2048" npm run build
 
 # 🐳 主应用阶段
 FROM node:18-alpine
