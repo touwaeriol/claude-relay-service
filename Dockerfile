@@ -8,7 +8,7 @@ WORKDIR /app/web/admin-spa
 COPY web/admin-spa/package*.json ./
 
 # 🔽 安装前端依赖
-RUN npm ci
+RUN npm config set registry https://registry.npmmirror.com && npm ci
 
 # 📋 复制前端源代码
 COPY web/admin-spa/ ./
@@ -38,7 +38,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # 🔽 安装依赖 (生产环境)
-RUN npm ci --only=production && \
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm ci --only=production && \
     npm cache clean --force
 
 # 📋 复制应用代码
